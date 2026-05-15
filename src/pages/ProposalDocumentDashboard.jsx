@@ -1236,6 +1236,10 @@ export default function ProposalDocumentDashboard() {
         display: 'flex', flexDirection: 'column', background: 'var(--surface)'
       }}>
         <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid var(--border)' }}>
+          <button onClick={() => navigate(-1)}
+            style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '0.82rem', padding: 0, marginBottom: 10 }}>
+            ← Back
+          </button>
           <div style={{ fontSize: '1rem', fontWeight: 700, marginBottom: 4 }}>Proposal Documents</div>
           <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
             {docs.length} document{docs.length !== 1 ? 's' : ''}

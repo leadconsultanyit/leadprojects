@@ -40,7 +40,7 @@ export default function AdminDashboard() {
   const [proposalMilestonesModal, setProposalMilestonesModal] = useState(null);
 
   // Universal pipeline filtering
-  const [pipelineFilter, setPipelineFilter] = useState({ month: '', vertical: '', contactPoint: '', leadOffice: '', search: '', lossReason: '' });
+  const [pipelineFilter, setPipelineFilter] = useState({ month: '', vertical: '', contactPoint: '', leadOffice: '', search: '', lossReason: '', certificationType: '' });
 
   // CV upload
   const [cvUploading, setCvUploading] = useState(false);
@@ -391,6 +391,10 @@ export default function AdminDashboard() {
         if (!(cp.name || '').toLowerCase().includes(q) && !(cp.mailId || '').toLowerCase().includes(q) && !(cp.number || '').includes(q)) return false;
       }
       if (pipelineFilter.lossReason && p.lossReason !== pipelineFilter.lossReason) return false;
+      if (pipelineFilter.certificationType) {
+        const ct = pipelineFilter.certificationType.toLowerCase();
+        if (!(p.certificationType || []).some(c => c.toLowerCase().includes(ct))) return false;
+      }
       if (pipelineFilter.search) {
         const s = pipelineFilter.search.toLowerCase();
         if (!p.projectName.toLowerCase().includes(s) && !p.clientName?.toLowerCase().includes(s) && !p.projectId.toLowerCase().includes(s)) return false;
@@ -647,6 +651,13 @@ export default function AdminDashboard() {
       </select>
       <input type="text" value={pipelineFilter.contactPoint} onChange={e => setPipelineFilter({ ...pipelineFilter, contactPoint: e.target.value })}
         placeholder="Contact point..." style={{ padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.85rem', width: 150 }} />
+      <select value={pipelineFilter.certificationType} onChange={e => setPipelineFilter({ ...pipelineFilter, certificationType: e.target.value })}
+        style={{ padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.85rem' }}>
+        <option value="">All Cert Types</option>
+        {[...new Set(projects.flatMap(p => p.certificationType || []).filter(Boolean))].sort().map(c => (
+          <option key={c} value={c}>{c}</option>
+        ))}
+      </select>
       {pipelineTab === 'lost' && (
         <select value={pipelineFilter.lossReason} onChange={e => setPipelineFilter({ ...pipelineFilter, lossReason: e.target.value })}
           style={{ padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.85rem' }}>
@@ -664,9 +675,9 @@ export default function AdminDashboard() {
       <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
         {activeFilteredList.length} of {activeUnfilteredList.length}
       </span>
-      {(pipelineFilter.month || pipelineFilter.vertical || pipelineFilter.leadOffice || pipelineFilter.contactPoint || pipelineFilter.search || pipelineFilter.lossReason) && (
+      {(pipelineFilter.month || pipelineFilter.vertical || pipelineFilter.leadOffice || pipelineFilter.contactPoint || pipelineFilter.search || pipelineFilter.lossReason || pipelineFilter.certificationType) && (
         <button className="btn btn-sm" style={{ background: 'var(--text-secondary)', color: '#fff', padding: '4px 10px' }}
-          onClick={() => setPipelineFilter({ month: '', vertical: '', contactPoint: '', leadOffice: '', search: '', lossReason: '' })}>
+          onClick={() => setPipelineFilter({ month: '', vertical: '', contactPoint: '', leadOffice: '', search: '', lossReason: '', certificationType: '' })}>
           Clear
         </button>
       )}

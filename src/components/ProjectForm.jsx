@@ -70,10 +70,22 @@ export default function ProjectForm({ project, onSave, onCancel }) {
   });
 
   const [metadata, setMetadata] = useState(null);
+  const [idLocked, setIdLocked] = useState(false);
 
   useEffect(() => {
     axios.get('/api/projects/metadata/all').then(res => setMetadata(res.data)).catch(() => {});
   }, []);
+
+  // Auto-generate project ID for new proposals whenever RS or CT changes
+  useEffect(() => {
+    if (project || idLocked) return;
+    const rs = form.ratingSystem[0] || '';
+    const ct = form.certificationType[0] || '';
+    if (!rs && !ct) return;
+    axios.get('/api/projects/next-id', { params: { ratingSystem: rs, certificationType: ct } })
+      .then(res => setForm(prev => ({ ...prev, projectId: res.data.projectId })))
+      .catch(() => {});
+  }, [form.ratingSystem, form.certificationType, project]);
 
   const LEAD_OFFICES = mergeUnique(DEFAULT_LEAD_OFFICES, metadata?.leadOffices);
   const SERVICES = mergeUnique(DEFAULT_SERVICES, metadata?.services);
@@ -147,9 +159,21 @@ export default function ProjectForm({ project, onSave, onCancel }) {
     <form onSubmit={handleSubmit}>
       <div className="inline-fields">
         <div className="form-group">
-          <label>Project ID</label>
-          <input value={form.projectId} onChange={e => setForm({ ...form, projectId: e.target.value })}
-            placeholder="PRJ-XXX-001" required disabled={!!project} />
+          <label>Project ID {!project && <span style={{ fontWeight: 400, fontSize: '0.78rem', color: idLocked ? 'var(--warning)' : 'var(--text-secondary)' }}>{idLocked ? '(manual)' : '(auto)'}</span>}</label>
+          <input
+            value={form.projectId}
+            onChange={e => { setIdLocked(true); setForm({ ...form, projectId: e.target.value }); }}
+            placeholder="e.g. IGBC-BDC-0001"
+            required
+            disabled={!!project}
+            style={!project && !idLocked ? { background: 'var(--bg)', color: 'var(--text-secondary)' } : {}}
+          />
+          {!project && idLocked && (
+            <button type="button" onClick={() => setIdLocked(false)}
+              style={{ marginTop: 4, fontSize: '0.75rem', color: 'var(--info)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+              ↺ Reset to auto
+            </button>
+          )}
         </div>
         <div className="form-group">
           <label>Project Name</label>

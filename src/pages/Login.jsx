@@ -62,28 +62,6 @@ export default function Login() {
         <div className="auth-link">
           Don't have an account? <Link to="/register">Register here</Link>
         </div>
-        <div style={{
-          marginTop: 24, padding: '14px 16px',
-          borderRadius: 12, background: 'rgba(255,255,255,0.02)',
-          border: '1px solid rgba(255,255,255,0.05)',
-          fontSize: '0.78rem', color: 'var(--text-secondary)',
-          lineHeight: 1.7
-        }}>
-          <span style={{
-            fontFamily: 'var(--font-display)', fontWeight: 700,
-            color: 'var(--text-secondary)', fontSize: '0.72rem',
-            textTransform: 'uppercase', letterSpacing: '0.06em'
-          }}>Demo Logins</span>
-          <div style={{ marginTop: 6 }}>
-            <span style={{ color: '#E11D48' }}>Admin</span> admin@greencore.com / admin123
-          </div>
-          <div>
-            <span style={{ color: '#7C3AED' }}>Business</span> business@greencore.com / business123
-          </div>
-          <div>
-            <span style={{ color: '#059669' }}>Employee</span> rahul@greencore.com / password123
-          </div>
-        </div>
       </div>
     </div>
   );

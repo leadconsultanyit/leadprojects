@@ -357,7 +357,6 @@ export default function Register() {
             <label>Role</label>
             <select value={role} onChange={e => setRole(e.target.value)}>
               <option value="employee">Employee</option>
-              <option value="business">Business Team</option>
               <option value="observer">Observer</option>
             </select>
           </div>

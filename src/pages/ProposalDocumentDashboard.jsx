@@ -1224,7 +1224,6 @@ export default function ProposalDocumentDashboard() {
     { key: 'refprojects', label: 'Reference Projects' },
     { key: 'milestones', label: 'Payment Milestones' },
     { key: 'scope', label: 'Scope of Work' },
-    { key: 'timeline', label: 'Timeline' },
     { key: 'generate', label: 'Generate' }
   ];
 
@@ -1359,7 +1358,6 @@ export default function ProposalDocumentDashboard() {
               {activeTab === 'refprojects' && renderRefProjectsTab()}
               {activeTab === 'milestones' && renderMilestonesTab()}
               {activeTab === 'scope' && renderScopeTab()}
-              {activeTab === 'timeline' && renderTimelineTab()}
               {activeTab === 'generate' && renderGenerateTab()}
             </div>
           </>

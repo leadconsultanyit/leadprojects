@@ -10,7 +10,7 @@ export default function EmployeeDashboard() {
   const [selectedProjects, setSelectedProjects] = useState([]);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
-  const [tab, setTab] = useState('projects');
+  const [tab, setTab] = useState('milestones');
   const [cvUploading, setCvUploading] = useState(false);
   const [cvMessage, setCvMessage] = useState('');
   const [profile, setProfile] = useState(null);
@@ -149,8 +149,10 @@ export default function EmployeeDashboard() {
     }));
   };
 
-  const activeProjects = projects.filter(p => p.pipelineStatus === 'workorder' && p.projectStatus === 'active');
-  const myProjects = projects.filter(p => selectedProjects.includes(p.projectId) && p.pipelineStatus === 'workorder');
+  const myProjects = projects.filter(p =>
+    (p.pipelineStatus === 'workorder' || p.pipelineStatus === 'workorder-held') &&
+    (p.assignedEmployeeIds || []).includes(user?.employeeId)
+  );
   const pf = profileForm || buildFormFromProfile(profile || {});
 
   return (
@@ -195,9 +197,6 @@ export default function EmployeeDashboard() {
       </div>
 
       <div className="tabs">
-        <button className={`tab ${tab === 'projects' ? 'active' : ''}`} onClick={() => setTab('projects')}>
-          Projects
-        </button>
         <button className={`tab ${tab === 'milestones' ? 'active' : ''}`} onClick={() => setTab('milestones')}>
           Milestones ({myProjects.length})
         </button>
@@ -206,46 +205,25 @@ export default function EmployeeDashboard() {
         </button>
       </div>
 
-      {tab === 'projects' && (
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <div className="card-title">Select Your Projects</div>
-              <div className="card-subtitle">Choose the projects you are currently working on</div>
-            </div>
-            <button className="btn btn-blue" onClick={saveProjects} disabled={saving}>
-              {saving ? 'Saving...' : 'Save Selection'}
-            </button>
-          </div>
-          {message && (
-            <div className={message.includes('success') ? 'auth-info' : 'auth-error'} style={{ marginBottom: 12 }}>
-              {message}
-            </div>
-          )}
-          <div className="checkbox-group">
-            {activeProjects.map(p => (
-              <label key={p.projectId}
-                className={`checkbox-item ${selectedProjects.includes(p.projectId) ? 'checked' : ''}`}>
-                <input type="checkbox" checked={selectedProjects.includes(p.projectId)}
-                  onChange={() => toggleProject(p.projectId)} />
-                <div>
-                  <div style={{ fontWeight: 500 }}>{p.projectId}</div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{p.projectName}</div>
-                </div>
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
-
       {tab === 'milestones' && myProjects.length > 0 && (
         <div>
           <div className="grid-2">
             {myProjects.map(p => {
+              const isHeld = p.pipelineStatus === 'workorder-held';
               const totalTMs = p.financialMilestones.reduce((s, fm) => s + fm.technicalMilestones.length, 0);
               const completedTMs = p.financialMilestones.reduce(
                 (s, fm) => s + fm.technicalMilestones.filter(t => t.status === 'completed').length, 0);
-              const progress = totalTMs > 0 ? Math.round((completedTMs / totalTMs) * 100) : 0;
+              const techProgress = totalTMs > 0 ? Math.round((completedTMs / totalTMs) * 100) : 0;
+
+              const totalBudget = p.financialMilestones.reduce((s, fm) => s + (fm.amount || 0), 0);
+              const raisedAmount = p.financialMilestones
+                .filter(fm => fm.status === 'in_progress' || fm.status === 'completed')
+                .reduce((s, fm) => s + (fm.amount || 0), 0);
+              const receivedAmount = p.financialMilestones
+                .filter(fm => fm.status === 'completed')
+                .reduce((s, fm) => s + (fm.amount || 0), 0);
+              const raisedPct = totalBudget > 0 ? Math.round((raisedAmount / totalBudget) * 100) : 0;
+              const receivedPct = totalBudget > 0 ? Math.round((receivedAmount / totalBudget) * 100) : 0;
 
               return (
                 <div className="card" key={p.projectId}>
@@ -254,18 +232,53 @@ export default function EmployeeDashboard() {
                       <div className="card-title">{p.projectName}</div>
                       <div className="card-subtitle">{p.projectId} | {p.clientName}</div>
                     </div>
-                    <span className={`badge badge-${p.projectStatus}`}>{p.projectStatus}</span>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      {isHeld && (
+                        <span style={{ fontSize: '0.72rem', padding: '2px 8px', borderRadius: 99, background: '#FEF3C7', color: '#92400E', fontWeight: 700 }}>
+                          ON HOLD
+                        </span>
+                      )}
+                      <span className={`badge badge-${p.projectStatus}`}>{p.projectStatus}</span>
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
                     <span className="vertical-tag">{p.vertical}</span>
                     <span className="money">{'₹'}{(p.totalProposedMoney / 100000).toFixed(1)}L</span>
                   </div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 4 }}>
-                    Progress: {progress}%
+
+                  {/* 3 Progress metrics */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: 2 }}>
+                        <span>Technical Completion</span><span>{techProgress}%</span>
+                      </div>
+                      <div className="progress-bar">
+                        <div className="progress-fill" style={{ width: `${techProgress}%`, background: 'var(--primary)' }} />
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: 2 }}>
+                        <span>Financial Raised</span><span>{raisedPct}%</span>
+                      </div>
+                      <div className="progress-bar">
+                        <div className="progress-fill" style={{ width: `${raisedPct}%`, background: '#D97706' }} />
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: 2 }}>
+                        <span>Money Received</span><span>{receivedPct}%</span>
+                      </div>
+                      <div className="progress-bar">
+                        <div className="progress-fill" style={{ width: `${receivedPct}%`, background: 'var(--success)' }} />
+                      </div>
+                    </div>
                   </div>
-                  <div className="progress-bar">
-                    <div className="progress-fill" style={{ width: `${progress}%` }} />
-                  </div>
+
+                  {isHeld && (
+                    <div style={{ padding: '8px 12px', background: '#FEF3C7', borderRadius: 6, fontSize: '0.82rem', color: '#92400E', marginBottom: 10 }}>
+                      This project is currently on hold. Milestone updates are disabled.
+                    </div>
+                  )}
 
                   {p.financialMilestones.map(fm => (
                     <div key={fm.financialMilestoneId} className="milestone-section">
@@ -279,14 +292,18 @@ export default function EmployeeDashboard() {
                           <span className="mi-title" style={{ fontSize: '0.85rem' }}>
                             {tm.technicalMilestoneId}: {tm.title}
                           </span>
-                          <select value={tm.status} onChange={e => updateMilestone(p.projectId, {
-                            technicalMilestoneId: tm.technicalMilestoneId,
-                            status: e.target.value
-                          })}>
-                            <option value="pending">Pending</option>
-                            <option value="in_progress">In Progress</option>
-                            <option value="completed">Completed</option>
-                          </select>
+                          {isHeld ? (
+                            <span className={`badge badge-${tm.status}`} style={{ fontSize: '0.75rem' }}>{tm.status.replace('_', ' ')}</span>
+                          ) : (
+                            <select value={tm.status} onChange={e => updateMilestone(p.projectId, {
+                              technicalMilestoneId: tm.technicalMilestoneId,
+                              status: e.target.value
+                            })}>
+                              <option value="pending">Pending</option>
+                              <option value="in_progress">In Progress</option>
+                              <option value="completed">Completed</option>
+                            </select>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -300,43 +317,12 @@ export default function EmployeeDashboard() {
 
       {tab === 'milestones' && myProjects.length === 0 && (
         <div className="card" style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>
-          No projects assigned. Select projects in the Projects tab first.
+          No projects assigned yet. Your assigned projects will appear here once an admin assigns them to you.
         </div>
       )}
 
       {tab === 'profile' && (
         <div>
-          {/* CV Upload Card */}
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-              <div>
-                <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: 4 }}>CV Upload</h3>
-                <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                  Upload your CV to auto-fill your profile with AI-extracted data.
-                </p>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                {profile?.cvPath && (
-                  <a href={profile.cvPath} target="_blank" rel="noreferrer" className="btn btn-sm btn-outline">
-                    Download CV
-                  </a>
-                )}
-                <label className="btn btn-sm btn-blue" style={{ cursor: cvUploading ? 'not-allowed' : 'pointer' }}>
-                  {cvUploading ? 'Parsing...' : 'Upload CV'}
-                  <input type="file" accept=".pdf,.txt,.doc,.docx"
-                    onChange={e => { if (e.target.files[0]) handleCvUpload(e.target.files[0]); }}
-                    disabled={cvUploading}
-                    style={{ display: 'none' }} />
-                </label>
-              </div>
-            </div>
-            {cvMessage && (
-              <div style={{ marginTop: 10, fontSize: '0.85rem', color: cvMessage.includes('success') ? 'var(--success)' : 'var(--error)' }}>
-                {cvMessage}
-              </div>
-            )}
-          </div>
-
           {profileMsg && (
             <div className={profileMsg.includes('success') ? 'auth-info' : 'auth-error'} style={{ marginBottom: 12 }}>
               {profileMsg}

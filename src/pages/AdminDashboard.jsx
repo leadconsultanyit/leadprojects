@@ -20,7 +20,7 @@ export default function AdminDashboard() {
   const [showProjectModal, setShowProjectModal] = useState(false);
   const [editingProject, setEditingProject] = useState(null);
   const [editingUser, setEditingUser] = useState(null);
-  const [userForm, setUserForm] = useState({ name: '', email: '', role: 'employee', employeeId: '' });
+  const [userForm, setUserForm] = useState({ name: '', email: '', role: 'employee', employeeId: '', maxProjects: 3 });
   const [cvUser, setCvUser] = useState(null);
 
   const [wonModal, setWonModal] = useState(null);
@@ -38,6 +38,10 @@ export default function AdminDashboard() {
   // Workorder milestones
   const [workorderMilestones, setWorkorderMilestones] = useState([]);
   const [proposalMilestonesModal, setProposalMilestonesModal] = useState(null);
+
+  // Reassign employees modal
+  const [reassignModal, setReassignModal] = useState(null);
+  const [reassignEmployees, setReassignEmployees] = useState([]);
 
   // Universal pipeline filtering
   const [pipelineFilter, setPipelineFilter] = useState({ month: '', vertical: '', contactPoint: '', leadOffice: '', search: '', lossReason: '', certificationType: '' });
@@ -82,7 +86,7 @@ export default function AdminDashboard() {
   };
   const startEditUser = (u) => {
     setEditingUser(u);
-    setUserForm({ name: u.name, email: u.email, role: u.role, employeeId: u.employeeId || '' });
+    setUserForm({ name: u.name, email: u.email, role: u.role, employeeId: u.employeeId || '', maxProjects: u.maxProjects ?? 3 });
   };
   const saveUser = async () => {
     await axios.put(`/api/users/${editingUser._id}`, userForm);
@@ -139,6 +143,42 @@ export default function AdminDashboard() {
     } catch (err) { alert(err.response?.data?.message || 'Failed'); }
   };
 
+  const moveToWorkorderHeld = async (project) => {
+    try {
+      await axios.put(`/api/projects/${project.projectId}/move-to-workorder-held`);
+      fetchProjects();
+    } catch (err) { alert(err.response?.data?.message || 'Failed'); }
+  };
+
+  const reactivateWorkorder = async (project) => {
+    try {
+      await axios.put(`/api/projects/${project.projectId}/reactivate-workorder`);
+      fetchProjects();
+    } catch (err) { alert(err.response?.data?.message || 'Failed'); }
+  };
+
+  const openReassignModal = async (project) => {
+    setReassignModal(project);
+    setReassignEmployees(project.assignedEmployeeIds || []);
+    setLoadingEmployees(true);
+    setActionError('');
+    try {
+      const res = await axios.get(`/api/projects/${project.projectId}/available-employees`);
+      setAvailableEmployees(res.data);
+    } catch (err) { setActionError('Failed to load employees'); }
+    setLoadingEmployees(false);
+  };
+
+  const saveReassign = async () => {
+    if (reassignEmployees.length < 1) { setActionError('Select at least 1 employee'); return; }
+    try {
+      await axios.put(`/api/projects/${reassignModal.projectId}/reassign-employees`, {
+        assignedEmployeeIds: reassignEmployees
+      });
+      setReassignModal(null); setReassignEmployees([]); setActionError(''); fetchProjects();
+    } catch (err) { setActionError(err.response?.data?.message || 'Failed'); }
+  };
+
   const moveToProposal = async (project) => {
     try {
       await axios.put(`/api/projects/${project.projectId}/move-to-proposal`);
@@ -149,11 +189,13 @@ export default function AdminDashboard() {
   const openWorkorderModal = async (project) => {
     setWorkorderModal(project);
     setSelectedEmployees([]);
+    const baseAmount = project.revisions?.[0]?.amount || project.proposalValue || project.totalProposedMoney || 0;
     const existingFMs = (project.financialMilestones || []).filter(fm => fm.title);
     setWorkorderMilestones(existingFMs.length > 0
       ? existingFMs.map((fm, i) => ({
           ...fm,
           financialMilestoneId: fm.financialMilestoneId || `FM-${i + 1}`,
+          amount: baseAmount > 0 ? Math.round((fm.amount / baseAmount) * 1000) / 10 : fm.amount,
           technicalMilestones: (fm.technicalMilestones || []).map((tm, j) => ({
             ...tm,
             technicalMilestoneId: tm.technicalMilestoneId || `TM-${i + 1}-${j + 1}`
@@ -214,11 +256,12 @@ export default function AdminDashboard() {
 
   const moveToWorkorder = async () => {
     if (selectedEmployees.length < 1) { setActionError('Select at least 1 employee'); return; }
+    const baseAmount = workorderModal.revisions?.[0]?.amount || workorderModal.proposalValue || workorderModal.totalProposedMoney || 0;
     const milestones = workorderMilestones
       .filter(fm => fm.title.trim())
       .map(fm => ({
         ...fm,
-        amount: Number(fm.amount) || 0,
+        amount: baseAmount > 0 ? Math.round((Number(fm.amount) / 100) * baseAmount) : Number(fm.amount) || 0,
         status: 'pending',
         technicalMilestones: fm.technicalMilestones
           .filter(tm => tm.title.trim())
@@ -359,11 +402,12 @@ export default function AdminDashboard() {
   };
 
   const saveProposalMilestones = async () => {
+    const baseAmount = proposalMilestonesModal.revisions?.[0]?.amount || proposalMilestonesModal.proposalValue || proposalMilestonesModal.totalProposedMoney || 0;
     const milestones = workorderMilestones
       .filter(fm => fm.title.trim())
       .map(fm => ({
         ...fm,
-        amount: Number(fm.amount) || 0,
+        amount: baseAmount > 0 ? Math.round((Number(fm.amount) / 100) * baseAmount) : Number(fm.amount) || 0,
         status: 'pending',
         technicalMilestones: fm.technicalMilestones
           .filter(tm => tm.title.trim())
@@ -438,12 +482,13 @@ export default function AdminDashboard() {
   const proposals = projects.filter(p => p.pipelineStatus === 'proposal');
   const wonProjects = projects.filter(p => p.pipelineStatus === 'won');
   const workorders = projects.filter(p => p.pipelineStatus === 'workorder');
+  const heldWorkorders = projects.filter(p => p.pipelineStatus === 'workorder-held');
   const holdProjects = projects.filter(p => p.pipelineStatus === 'hold');
   const lostProjects = projects.filter(p => p.pipelineStatus === 'lost');
 
   const filteredProposals = applyPipelineFilter(proposals);
   const filteredWonProjects = applyPipelineFilter(wonProjects);
-  const filteredWorkorders = applyPipelineFilter(workorders);
+  const filteredWorkorders = applyPipelineFilter([...workorders, ...heldWorkorders]);
   const filteredHoldProjects = applyPipelineFilter(holdProjects);
   const filteredLostProjects = applyPipelineFilter(lostProjects);
   const filteredAllProjects = applyPipelineFilter(projects);
@@ -458,7 +503,7 @@ export default function AdminDashboard() {
   const activeUnfilteredList = pipelineTab === 'all' ? projects
     : pipelineTab === 'proposals' ? proposals
     : pipelineTab === 'won' ? wonProjects
-    : pipelineTab === 'workorders' ? workorders
+    : pipelineTab === 'workorders' ? [...workorders, ...heldWorkorders]
     : pipelineTab === 'hold' ? holdProjects
     : lostProjects;
 
@@ -1081,31 +1126,28 @@ export default function AdminDashboard() {
       {/* ========== PIPELINE TAB ========== */}
       {tab === 'pipeline' && (
         <div>
-          <div className="pipeline-tabs">
-            {[
-              { key: 'all', label: 'All', count: projects.length, color: '#6366F1' },
-              { key: 'proposals', label: 'Proposals', count: proposals.length, color: 'var(--info)' },
-              { key: 'won', label: 'Won', count: wonProjects.length, color: 'var(--success)' },
-              { key: 'workorders', label: 'Workorders', count: workorders.length, color: 'var(--primary)' },
-              { key: 'hold', label: 'Hold', count: holdProjects.length, color: 'var(--warning)' },
-              { key: 'lost', label: 'Lost', count: lostProjects.length, color: 'var(--error)' }
-            ].map(t => (
-              <button key={t.key}
-                className={`pipeline-tab ${pipelineTab === t.key ? 'active' : ''}`}
-                style={{ '--tab-color': t.color }}
-                onClick={() => setPipelineTab(t.key)}>
-                {t.label} <span className="pipeline-tab-count">{t.count}</span>
-              </button>
-            ))}
-          </div>
-
-          {pipelineTab === 'proposals' && (
-            <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
-              <button className="btn btn-blue" onClick={() => { setEditingProject(null); setShowProjectModal(true); }}>
-                + New Proposal
-              </button>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <div className="pipeline-tabs" style={{ marginBottom: 0 }}>
+              {[
+                { key: 'all', label: 'All', count: projects.length, color: '#6366F1' },
+                { key: 'proposals', label: 'Ongoing', count: proposals.length, color: 'var(--info)' },
+                { key: 'won', label: 'Won', count: wonProjects.length, color: 'var(--success)' },
+                { key: 'workorders', label: 'Workorders', count: workorders.length + heldWorkorders.length, color: 'var(--primary)' },
+                { key: 'hold', label: 'Hold', count: holdProjects.length, color: 'var(--warning)' },
+                { key: 'lost', label: 'Failed', count: lostProjects.length, color: 'var(--error)' }
+              ].map(t => (
+                <button key={t.key}
+                  className={`pipeline-tab ${pipelineTab === t.key ? 'active' : ''}`}
+                  style={{ '--tab-color': t.color }}
+                  onClick={() => setPipelineTab(t.key)}>
+                  {t.label} <span className="pipeline-tab-count">{t.count}</span>
+                </button>
+              ))}
             </div>
-          )}
+            <button className="btn btn-blue" onClick={() => { setEditingProject(null); setShowProjectModal(true); }}>
+              + New Proposal
+            </button>
+          </div>
 
           <div className="grid-2">
             {renderFilterBar()}
@@ -1151,7 +1193,7 @@ export default function AdminDashboard() {
                 <button className="btn btn-sm" style={{ background: 'var(--warning)', color: '#fff' }}
                   onClick={() => moveToHold(p)}>Hold</button>
                 <button className="btn btn-sm btn-red"
-                  onClick={() => { setLostModal(p); setLostReason(''); setLostReasonOther(''); setLostComments(''); setActionError(''); }}>Lost</button>
+                  onClick={() => { setLostModal(p); setLostReason(''); setLostReasonOther(''); setLostComments(''); setActionError(''); }}>Failed</button>
                 <button className="btn btn-sm btn-outline"
                   onClick={() => { setRevisionModal(p); setRevisionAmount(''); setRevisionNotes(''); setActionError(''); }}>
                   + Revision
@@ -1199,26 +1241,42 @@ export default function AdminDashboard() {
             </>))}
 
             {pipelineTab === 'workorders' && filteredWorkorders.map(p => {
-              const totalTMs = p.financialMilestones.reduce((s, fm) => s + fm.technicalMilestones.length, 0);
-              const completedTMs = p.financialMilestones.reduce(
-                (s, fm) => s + fm.technicalMilestones.filter(t => t.status === 'completed').length, 0);
-              const progress = totalTMs > 0 ? Math.round((completedTMs / totalTMs) * 100) : 0;
+              const fms = p.financialMilestones || [];
+              const totalTMs = fms.reduce((s, fm) => s + (fm.technicalMilestones || []).length, 0);
+              const completedTMs = fms.reduce(
+                (s, fm) => s + (fm.technicalMilestones || []).filter(t => t.status === 'completed').length, 0);
+              const techProgress = totalTMs > 0 ? Math.round((completedTMs / totalTMs) * 100) : 0;
+              const totalFMAmount = fms.reduce((s, fm) => s + (fm.amount || 0), 0);
+              const raisedAmount = fms.filter(fm => fm.status === 'in_progress' || fm.status === 'completed').reduce((s, fm) => s + (fm.amount || 0), 0);
+              const receivedAmount = fms.filter(fm => fm.status === 'completed').reduce((s, fm) => s + (fm.amount || 0), 0);
+              const raisedPct = totalFMAmount > 0 ? Math.round((raisedAmount / totalFMAmount) * 100) : 0;
+              const receivedPct = totalFMAmount > 0 ? Math.round((receivedAmount / totalFMAmount) * 100) : 0;
+              const assignedEmps = (p.assignedEmployeeIds || []).map(id => {
+                const emp = users.find(u => u.employeeId === id);
+                return emp ? emp.name : id;
+              });
+              const isHeld = p.pipelineStatus === 'workorder-held';
               return (
-                <div className="card pipeline-card" key={p.projectId}>
+                <div className="card pipeline-card" key={p.projectId} style={isHeld ? { borderLeft: '4px solid var(--warning)' } : {}}>
                   <div className="card-header">
                     <div>
                       <div className="card-title">{p.projectName}</div>
                       <div className="card-subtitle">{p.projectId} | {p.clientName}</div>
                     </div>
-                    <span className={`badge badge-${p.projectStatus}`}>{p.projectStatus}</span>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      {isHeld && <span className="badge" style={{ background: '#D97706', color: '#fff' }}>ON HOLD</span>}
+                      <span className={`badge badge-${p.projectStatus}`}>{p.projectStatus}</span>
+                    </div>
                   </div>
                   <div style={{ display: 'flex', gap: 12, marginBottom: 4, alignItems: 'center', flexWrap: 'wrap' }}>
                     <span className="vertical-tag">{p.vertical}</span>
                     <span className="money">{fmtMoney(p.totalProposedMoney)}</span>
-                    <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                      {p.assignedEmployeeIds?.length || 0} employees
-                    </span>
                   </div>
+                  {assignedEmps.length > 0 && (
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 6 }}>
+                      Assigned: {assignedEmps.join(', ')}
+                    </div>
+                  )}
                   {p.approvedBudget && (
                     <div className="delta-inline">
                       <span>Proposed: {fmtMoney(p.proposalValue || p.totalProposedMoney)}</span>
@@ -1228,15 +1286,37 @@ export default function AdminDashboard() {
                       </span>
                     </div>
                   )}
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 4, marginTop: 6 }}>
-                    Progress: {progress}% ({completedTMs}/{totalTMs} milestones)
-                  </div>
-                  <div className="progress-bar">
-                    <div className="progress-fill" style={{ width: `${progress}%` }} />
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: 2 }}>
+                      <span>Technical: {techProgress}% ({completedTMs}/{totalTMs})</span>
+                    </div>
+                    <div className="progress-bar" style={{ marginBottom: 6 }}>
+                      <div className="progress-fill" style={{ width: `${techProgress}%`, background: '#059669' }} />
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: 2 }}>
+                      <span>Financial Raised: {raisedPct}%</span>
+                    </div>
+                    <div className="progress-bar" style={{ marginBottom: 6 }}>
+                      <div className="progress-fill" style={{ width: `${raisedPct}%`, background: '#0891B2' }} />
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: 2 }}>
+                      <span>Money Received: {receivedPct}%</span>
+                    </div>
+                    <div className="progress-bar">
+                      <div className="progress-fill" style={{ width: `${receivedPct}%`, background: '#7C3AED' }} />
+                    </div>
                   </div>
                   {renderContactPoint(p.contactPoint)}
                   {renderMetaTags(p)}
                   <div className="btn-group" style={{ marginTop: 12 }}>
+                    {!isHeld && (
+                      <button className="btn btn-sm" style={{ background: 'var(--warning)', color: '#fff' }}
+                        onClick={() => moveToWorkorderHeld(p)}>Hold Project</button>
+                    )}
+                    {isHeld && (
+                      <button className="btn btn-sm btn-green" onClick={() => reactivateWorkorder(p)}>Reactivate</button>
+                    )}
+                    <button className="btn btn-sm btn-blue" onClick={() => openReassignModal(p)}>Re-assign</button>
                     <button className="btn btn-sm btn-outline"
                       onClick={() => { setEditingProject(p); setShowProjectModal(true); }}>Edit</button>
                     <button className="btn btn-sm btn-red" onClick={() => deleteProject(p.projectId)}>Delete</button>
@@ -1253,7 +1333,7 @@ export default function AdminDashboard() {
                 Won
               </button>
               <button className="btn btn-sm btn-red"
-                onClick={() => { setLostModal(p); setLostReason(''); setLostReasonOther(''); setLostComments(''); setActionError(''); }}>Lost</button>
+                onClick={() => { setLostModal(p); setLostReason(''); setLostReasonOther(''); setLostComments(''); setActionError(''); }}>Failed</button>
             </>))}
 
             {pipelineTab === 'lost' && filteredLostProjects.map(p => (
@@ -1335,7 +1415,7 @@ export default function AdminDashboard() {
                 </thead>
                 <tbody>
                   {projects.filter(p => p.approvedBudget).map(p => {
-                    const proposed = p.proposalValue || p.totalProposedMoney || 0;
+                    const proposed = p.revisions?.[0]?.amount || p.proposalValue || p.totalProposedMoney || 0;
                     const delta = p.approvedBudget - proposed;
                     const pct = proposed > 0 ? ((delta / proposed) * 100).toFixed(1) : 0;
                     return (
@@ -1550,6 +1630,11 @@ export default function AdminDashboard() {
                   <input value={userForm.employeeId} onChange={e => setUserForm({ ...userForm, employeeId: e.target.value })} />
                 </div>
               </div>
+              <div className="form-group">
+                <label>Max Projects (concurrent workorders)</label>
+                <input type="number" min={1} max={20} value={userForm.maxProjects}
+                  onChange={e => setUserForm({ ...userForm, maxProjects: Number(e.target.value) })} />
+              </div>
             </div>
             <div className="modal-footer">
               <button className="btn btn-outline" onClick={() => setEditingUser(null)}>Cancel</button>
@@ -1730,8 +1815,19 @@ export default function AdminDashboard() {
                 Proposal created. Optionally add financial and technical milestones now, or skip to do it later.
               </p>
               {actionError && <div className="auth-error">{actionError}</div>}
+              {(() => {
+                const pmBase = proposalMilestonesModal.revisions?.[0]?.amount || proposalMilestonesModal.proposalValue || proposalMilestonesModal.totalProposedMoney || 0;
+                return pmBase > 0 && (
+                  <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: 10 }}>
+                    Base proposal value: <strong>{fmtMoney(pmBase)}</strong> — enter % for each milestone
+                  </div>
+                );
+              })()}
               <h3 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: 8 }}>Financial & Technical Milestones</h3>
-              {workorderMilestones.map((fm, fmIdx) => (
+              {workorderMilestones.map((fm, fmIdx) => {
+                const pmBase = proposalMilestonesModal.revisions?.[0]?.amount || proposalMilestonesModal.proposalValue || proposalMilestonesModal.totalProposedMoney || 0;
+                const computedAmt = pmBase > 0 ? Math.round((Number(fm.amount) / 100) * pmBase) : 0;
+                return (
                 <div key={fmIdx} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 16, marginBottom: 12, background: 'var(--card, #F3F4F6)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                     <strong style={{ fontSize: '0.9rem' }}>Financial Milestone {fmIdx + 1}</strong>
@@ -1745,8 +1841,10 @@ export default function AdminDashboard() {
                       <input value={fm.title} onChange={e => updateFM(fmIdx, 'title', e.target.value)} placeholder="e.g., Registration Payment" />
                     </div>
                     <div className="form-group" style={{ marginBottom: 8 }}>
-                      <label style={{ fontSize: '0.8rem' }}>Amount (INR)</label>
-                      <input type="number" value={fm.amount} onChange={e => updateFM(fmIdx, 'amount', e.target.value)} placeholder="Amount" />
+                      <label style={{ fontSize: '0.8rem' }}>
+                        Amount (% of proposal){pmBase > 0 && computedAmt > 0 && <span style={{ color: 'var(--success)', marginLeft: 6 }}>= {fmtMoney(computedAmt)}</span>}
+                      </label>
+                      <input type="number" min={0} max={100} value={fm.amount} onChange={e => updateFM(fmIdx, 'amount', e.target.value)} placeholder="e.g. 20" />
                     </div>
                   </div>
                   <div style={{ marginLeft: 16 }}>
@@ -1767,7 +1865,7 @@ export default function AdminDashboard() {
                       style={{ marginTop: 4, fontSize: '0.8rem' }}>+ Add Technical Milestone</button>
                   </div>
                 </div>
-              ))}
+              ); })}
               <button type="button" className="btn btn-sm btn-outline" onClick={addFinancialMilestone}
                 style={{ marginBottom: 16 }}>+ Add Financial Milestone</button>
             </div>
@@ -1814,7 +1912,7 @@ export default function AdminDashboard() {
         <div className="modal-overlay" onClick={() => setLostModal(null)}>
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 500 }}>
             <div className="modal-header">
-              <h2>Mark as Lost</h2>
+              <h2>Mark as Failed</h2>
               <button className="btn-icon" onClick={() => setLostModal(null)}>&#10005;</button>
             </div>
             <div className="modal-body">
@@ -1848,7 +1946,7 @@ export default function AdminDashboard() {
             </div>
             <div className="modal-footer">
               <button className="btn btn-outline" onClick={() => setLostModal(null)}>Cancel</button>
-              <button className="btn btn-red" onClick={moveToLost}>Confirm Lost</button>
+              <button className="btn btn-red" onClick={moveToLost}>Confirm Failed</button>
             </div>
           </div>
         </div>
@@ -1914,6 +2012,69 @@ export default function AdminDashboard() {
         </div>
       )}
 
+      {/* Reassign Employees Modal */}
+      {reassignModal && (
+        <div className="modal-overlay" onClick={() => setReassignModal(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 600 }}>
+            <div className="modal-header">
+              <h2>Re-assign Employees</h2>
+              <button className="btn-icon" onClick={() => setReassignModal(null)}>&#10005;</button>
+            </div>
+            <div className="modal-body">
+              <p style={{ marginBottom: 8 }}>
+                <strong>{reassignModal.projectName}</strong> ({reassignModal.projectId})
+              </p>
+              {actionError && <div className="auth-error">{actionError}</div>}
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
+                Select employees to assign. Employees at max capacity are disabled.
+              </p>
+              {loadingEmployees ? (
+                <p>Loading available employees...</p>
+              ) : (
+                <div className="employee-list" style={{ maxHeight: 300, overflowY: 'auto' }}>
+                  {availableEmployees.map(emp => {
+                    const isCurrentlyAssigned = (reassignModal.assignedEmployeeIds || []).includes(emp.employeeId);
+                    const isSelected = reassignEmployees.includes(emp.employeeId);
+                    return (
+                      <label key={emp.employeeId}
+                        className={`employee-option ${isSelected ? 'selected' : ''} ${!emp.available && !isCurrentlyAssigned ? 'unavailable' : ''}`}>
+                        <input type="checkbox" checked={isSelected}
+                          onChange={() => setReassignEmployees(prev =>
+                            prev.includes(emp.employeeId) ? prev.filter(e => e !== emp.employeeId) : [...prev, emp.employeeId]
+                          )}
+                          disabled={!emp.available && !isCurrentlyAssigned} />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <strong>{emp.name}</strong>
+                            <code style={{ fontSize: '0.75rem' }}>{emp.employeeId}</code>
+                            {isCurrentlyAssigned && <span className="badge badge-verified" style={{ fontSize: '0.7rem' }}>Currently Assigned</span>}
+                            {!emp.available && !isCurrentlyAssigned && <span className="badge badge-unverified">At Capacity</span>}
+                          </div>
+                          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: 2 }}>
+                            {emp.activeProjectCount}/{emp.maxProjects || 3} projects
+                            {emp.credentials?.length > 0 && ` | ${emp.credentials.slice(0, 4).join(', ')}`}
+                          </div>
+                        </div>
+                        <div className={`match-score ${emp.matchScore >= 50 ? 'high' : emp.matchScore > 0 ? 'medium' : 'low'}`}>
+                          {emp.matchScore}% match
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-outline" onClick={() => setReassignModal(null)}>Cancel</button>
+              <button className="btn btn-blue" onClick={saveReassign}
+                disabled={reassignEmployees.length < 1}>
+                Save ({reassignEmployees.length} selected)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Workorder Modal with Milestones */}
       {workorderModal && (
         <div className="modal-overlay" onClick={() => setWorkorderModal(null)}>
@@ -1972,10 +2133,18 @@ export default function AdminDashboard() {
               )}
 
               <h3 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: 8 }}>Financial & Technical Milestones</h3>
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
-                Define financial milestones and their technical sub-milestones for this workorder.
-              </p>
-              {workorderMilestones.map((fm, fmIdx) => (
+              {(() => {
+                const woBase = workorderModal.revisions?.[0]?.amount || workorderModal.proposalValue || workorderModal.totalProposedMoney || 0;
+                return woBase > 0 && (
+                  <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: 10 }}>
+                    Base proposal value: <strong>{fmtMoney(woBase)}</strong> — enter % for each milestone
+                  </div>
+                );
+              })()}
+              {workorderMilestones.map((fm, fmIdx) => {
+                const woBase = workorderModal.revisions?.[0]?.amount || workorderModal.proposalValue || workorderModal.totalProposedMoney || 0;
+                const computedAmt = woBase > 0 ? Math.round((Number(fm.amount) / 100) * woBase) : 0;
+                return (
                 <div key={fmIdx} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 16, marginBottom: 12, background: 'var(--card, #F3F4F6)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                     <strong style={{ fontSize: '0.9rem' }}>Financial Milestone {fmIdx + 1}</strong>
@@ -1990,9 +2159,11 @@ export default function AdminDashboard() {
                         placeholder="e.g., Registration Payment" />
                     </div>
                     <div className="form-group" style={{ marginBottom: 8 }}>
-                      <label style={{ fontSize: '0.8rem' }}>Amount (INR)</label>
-                      <input type="number" value={fm.amount} onChange={e => updateFM(fmIdx, 'amount', e.target.value)}
-                        placeholder="Amount" />
+                      <label style={{ fontSize: '0.8rem' }}>
+                        Amount (% of proposal){woBase > 0 && computedAmt > 0 && <span style={{ color: 'var(--success)', marginLeft: 6 }}>= {fmtMoney(computedAmt)}</span>}
+                      </label>
+                      <input type="number" min={0} max={100} value={fm.amount} onChange={e => updateFM(fmIdx, 'amount', e.target.value)}
+                        placeholder="e.g. 20" />
                     </div>
                   </div>
                   <div style={{ marginLeft: 16 }}>
@@ -2013,7 +2184,7 @@ export default function AdminDashboard() {
                       style={{ marginTop: 4, fontSize: '0.8rem' }}>+ Add Technical Milestone</button>
                   </div>
                 </div>
-              ))}
+              ); })}
               <button type="button" className="btn btn-sm btn-outline" onClick={addFinancialMilestone}
                 style={{ marginBottom: 16 }}>+ Add Financial Milestone</button>
             </div>

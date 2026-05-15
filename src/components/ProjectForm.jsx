@@ -135,12 +135,13 @@ export default function ProjectForm({ project, onSave, onCancel }) {
       currentTechnicalMilestone: null
     };
 
-    if (form.servicesOther) data.services = [...data.services, form.servicesOther];
-    if (form.ratingSystemOther) data.ratingSystem = [...data.ratingSystem, form.ratingSystemOther];
-    if (form.certificationTypeOther) data.certificationType = [...data.certificationType, form.certificationTypeOther];
-    if (form.additionalServicesOther) data.additionalServices = [...data.additionalServices, form.additionalServicesOther];
-    if (form.buildingUsageOther) data.buildingUsage = form.buildingUsageOther;
-    if (form.clientSectorOther) data.clientSector = form.clientSectorOther;
+    const addOther = (val) => val && val.trim() && val.trim() !== 'Other';
+    if (addOther(form.servicesOther)) data.services = [...data.services, form.servicesOther.trim()];
+    if (addOther(form.ratingSystemOther)) data.ratingSystem = [...data.ratingSystem, form.ratingSystemOther.trim()];
+    if (addOther(form.certificationTypeOther)) data.certificationType = [...data.certificationType, form.certificationTypeOther.trim()];
+    if (addOther(form.additionalServicesOther)) data.additionalServices = [...data.additionalServices, form.additionalServicesOther.trim()];
+    if (addOther(form.buildingUsageOther)) data.buildingUsage = form.buildingUsageOther.trim();
+    if (addOther(form.clientSectorOther)) data.clientSector = form.clientSectorOther.trim();
     const cleanVersions = {};
     for (const [key, val] of Object.entries(data.ratingSystemVersions || {})) {
       if (key.endsWith('_custom')) continue;
@@ -236,7 +237,7 @@ export default function ProjectForm({ project, onSave, onCancel }) {
         <div className="form-group">
           <label>Project Area</label>
           <input value={form.projectArea} onChange={e => setForm({ ...form, projectArea: e.target.value })}
-            placeholder="Project area or zone" />
+            placeholder="e.g. 5000 sq.ft" />
         </div>
       </div>
 

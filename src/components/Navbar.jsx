@@ -73,11 +73,7 @@ export default function Navbar() {
   return (
     <nav className="navbar">
       <div className="navbar-brand">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
-          <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
-        </svg>
-        Tracker
+        <img src="/logo.png" alt="LEAD Logo" style={{ height: 32, width: 'auto', objectFit: 'contain' }} />
       </div>
       {canSeeProposals && (
         <div className="navbar-center" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>

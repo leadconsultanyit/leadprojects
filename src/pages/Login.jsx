@@ -29,17 +29,8 @@ export default function Login() {
   return (
     <div className="auth-container">
       <div className="auth-card">
-        <div style={{
-          width: 48, height: 48, borderRadius: 14,
-          background: 'linear-gradient(135deg, rgba(5,150,105,0.12), rgba(124,58,237,0.08))',
-          border: '1px solid rgba(5,150,105,0.2)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          margin: '0 auto 20px'
-        }}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
-            <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
-          </svg>
+        <div style={{ margin: '0 auto 20px', display: 'flex', justifyContent: 'center' }}>
+          <img src="/logo.png" alt="LEAD Logo" style={{ height: 56, width: 'auto', objectFit: 'contain' }} />
         </div>
         <h1 className="auth-title">Welcome back</h1>
         <p className="auth-subtitle">Sign in to Project Milestone Tracker</p>

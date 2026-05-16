@@ -42,6 +42,15 @@ export default function AdminDashboard() {
   // Reassign employees modal
   const [reassignModal, setReassignModal] = useState(null);
   const [reassignEmployees, setReassignEmployees] = useState([]);
+  const [reassignForceAssign, setReassignForceAssign] = useState(false);
+
+  // Workorder settings
+  const [workorderMaxEmployees, setWorkorderMaxEmployees] = useState(5);
+  const [forceAssign, setForceAssign] = useState(false);
+
+  // Invoice emails
+  const [invoiceEmailsModal, setInvoiceEmailsModal] = useState(null);
+  const [invoiceEmailsInput, setInvoiceEmailsInput] = useState('');
 
   // Universal pipeline filtering
   const [pipelineFilter, setPipelineFilter] = useState({ month: '', vertical: '', contactPoint: '', leadOffice: '', search: '', lossReason: '', certificationType: '' });
@@ -160,6 +169,7 @@ export default function AdminDashboard() {
   const openReassignModal = async (project) => {
     setReassignModal(project);
     setReassignEmployees(project.assignedEmployeeIds || []);
+    setReassignForceAssign(false);
     setLoadingEmployees(true);
     setActionError('');
     try {
@@ -173,10 +183,19 @@ export default function AdminDashboard() {
     if (reassignEmployees.length < 1) { setActionError('Select at least 1 employee'); return; }
     try {
       await axios.put(`/api/projects/${reassignModal.projectId}/reassign-employees`, {
-        assignedEmployeeIds: reassignEmployees
+        assignedEmployeeIds: reassignEmployees,
+        forceAssign: reassignForceAssign
       });
-      setReassignModal(null); setReassignEmployees([]); setActionError(''); fetchProjects();
+      setReassignModal(null); setReassignEmployees([]); setReassignForceAssign(false); setActionError(''); fetchProjects();
     } catch (err) { setActionError(err.response?.data?.message || 'Failed'); }
+  };
+
+  const saveInvoiceEmails = async () => {
+    const emails = invoiceEmailsInput.split(/[\n,;]/).map(e => e.trim()).filter(Boolean);
+    try {
+      await axios.put(`/api/projects/${invoiceEmailsModal.projectId}`, { invoiceRecipientEmails: emails });
+      setInvoiceEmailsModal(null); setInvoiceEmailsInput(''); fetchProjects();
+    } catch (err) { alert(err.response?.data?.message || 'Failed to save emails'); }
   };
 
   const moveToProposal = async (project) => {
@@ -189,6 +208,8 @@ export default function AdminDashboard() {
   const openWorkorderModal = async (project) => {
     setWorkorderModal(project);
     setSelectedEmployees([]);
+    setWorkorderMaxEmployees(project.maxEmployees ?? 5);
+    setForceAssign(false);
     const baseAmount = project.revisions?.[0]?.amount || project.proposalValue || project.totalProposedMoney || 0;
     const existingFMs = (project.financialMilestones || []).filter(fm => fm.title);
     setWorkorderMilestones(existingFMs.length > 0
@@ -270,9 +291,11 @@ export default function AdminDashboard() {
     try {
       await axios.put(`/api/projects/${workorderModal.projectId}/move-to-workorder`, {
         assignedEmployeeIds: selectedEmployees,
-        financialMilestones: milestones
+        financialMilestones: milestones,
+        maxEmployees: workorderMaxEmployees,
+        forceAssign
       });
-      setWorkorderModal(null); setSelectedEmployees([]); setWorkorderMilestones([]); setActionError(''); fetchProjects();
+      setWorkorderModal(null); setSelectedEmployees([]); setWorkorderMilestones([]); setForceAssign(false); setActionError(''); fetchProjects();
     } catch (err) { setActionError(err.response?.data?.message || 'Failed'); }
   };
 
@@ -1308,6 +1331,11 @@ export default function AdminDashboard() {
                   </div>
                   {renderContactPoint(p.contactPoint)}
                   {renderMetaTags(p)}
+                  {(p.invoiceRecipientEmails || []).length > 0 && (
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: 6 }}>
+                      Invoice to: {p.invoiceRecipientEmails.join(', ')}
+                    </div>
+                  )}
                   <div className="btn-group" style={{ marginTop: 12 }}>
                     {!isHeld && (
                       <button className="btn btn-sm" style={{ background: 'var(--warning)', color: '#fff' }}
@@ -1317,6 +1345,11 @@ export default function AdminDashboard() {
                       <button className="btn btn-sm btn-green" onClick={() => reactivateWorkorder(p)}>Reactivate</button>
                     )}
                     <button className="btn btn-sm btn-blue" onClick={() => openReassignModal(p)}>Re-assign</button>
+                    <button className="btn btn-sm btn-outline"
+                      onClick={() => {
+                        setInvoiceEmailsModal(p);
+                        setInvoiceEmailsInput((p.invoiceRecipientEmails || []).join('\n'));
+                      }}>Invoice Emails</button>
                     <button className="btn btn-sm btn-outline"
                       onClick={() => { setEditingProject(p); setShowProjectModal(true); }}>Edit</button>
                     <button className="btn btn-sm btn-red" onClick={() => deleteProject(p.projectId)}>Delete</button>
@@ -1752,25 +1785,15 @@ export default function AdminDashboard() {
               <div style={{ marginTop: 20, padding: '16px', background: 'var(--bg)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
                   <div>
-                    <strong style={{ fontSize: '0.9rem' }}>CV Actions</strong>
-                    <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: 2 }}>Upload a new CV to re-parse or generate a Word CV from profile data</div>
+                    <strong style={{ fontSize: '0.9rem' }}>CV</strong>
+                    <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: 2 }}>Generate a formatted Word CV from this employee's profile data</div>
                   </div>
                   <div className="btn-group">
-                    {cvUser.cvPath && (
-                      <a href={cvUser.cvPath} target="_blank" rel="noreferrer" className="btn btn-sm btn-outline">Original CV</a>
-                    )}
-                    <label className="btn btn-sm btn-outline" style={{ cursor: cvUploading ? 'not-allowed' : 'pointer' }}>
-                      {cvUploading ? 'Parsing...' : 'Re-parse CV'}
-                      <input type="file" accept=".pdf,.txt,.doc,.docx"
-                        onChange={e => { if (e.target.files[0]) handleCvUpload(cvUser._id, e.target.files[0]); }}
-                        disabled={cvUploading} style={{ display: 'none' }} />
-                    </label>
                     <button className="btn btn-sm btn-green" onClick={() => handleGenerateCV(cvUser._id, cvUser.name)}>
                       Generate CV
                     </button>
                   </div>
                 </div>
-                {cvMessage && <div style={{ marginTop: 8, fontSize: '0.85rem', color: cvMessage.includes('success') ? 'var(--success)' : 'var(--error)' }}>{cvMessage}</div>}
               </div>
             </div>
             <div className="modal-footer">
@@ -2025,9 +2048,15 @@ export default function AdminDashboard() {
                 <strong>{reassignModal.projectName}</strong> ({reassignModal.projectId})
               </p>
               {actionError && <div className="auth-error">{actionError}</div>}
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
-                Select employees to assign. Employees at max capacity are disabled.
-              </p>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0 }}>
+                  Max employees for this project: <strong>{reassignModal.maxEmployees ?? 5}</strong>
+                </p>
+                <label style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={reassignForceAssign} onChange={e => setReassignForceAssign(e.target.checked)} />
+                  Override capacity limit
+                </label>
+              </div>
               {loadingEmployees ? (
                 <p>Loading available employees...</p>
               ) : (
@@ -2035,20 +2064,22 @@ export default function AdminDashboard() {
                   {availableEmployees.map(emp => {
                     const isCurrentlyAssigned = (reassignModal.assignedEmployeeIds || []).includes(emp.employeeId);
                     const isSelected = reassignEmployees.includes(emp.employeeId);
+                    const atCap = !emp.available && !isCurrentlyAssigned;
+                    const isDisabled = atCap && !reassignForceAssign;
                     return (
                       <label key={emp.employeeId}
-                        className={`employee-option ${isSelected ? 'selected' : ''} ${!emp.available && !isCurrentlyAssigned ? 'unavailable' : ''}`}>
+                        className={`employee-option ${isSelected ? 'selected' : ''} ${isDisabled ? 'unavailable' : ''}`}>
                         <input type="checkbox" checked={isSelected}
                           onChange={() => setReassignEmployees(prev =>
                             prev.includes(emp.employeeId) ? prev.filter(e => e !== emp.employeeId) : [...prev, emp.employeeId]
                           )}
-                          disabled={!emp.available && !isCurrentlyAssigned} />
+                          disabled={isDisabled} />
                         <div style={{ flex: 1 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                             <strong>{emp.name}</strong>
                             <code style={{ fontSize: '0.75rem' }}>{emp.employeeId}</code>
                             {isCurrentlyAssigned && <span className="badge badge-verified" style={{ fontSize: '0.7rem' }}>Currently Assigned</span>}
-                            {!emp.available && !isCurrentlyAssigned && <span className="badge badge-unverified">At Capacity</span>}
+                            {atCap && <span className="badge badge-unverified" style={{ opacity: reassignForceAssign ? 0.5 : 1 }}>At Capacity</span>}
                           </div>
                           <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: 2 }}>
                             {emp.activeProjectCount}/{emp.maxProjects || 3} projects
@@ -2075,6 +2106,40 @@ export default function AdminDashboard() {
         </div>
       )}
 
+      {/* Invoice Emails Modal */}
+      {invoiceEmailsModal && (
+        <div className="modal-overlay" onClick={() => setInvoiceEmailsModal(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+            <div className="modal-header">
+              <h2>Invoice Recipient Emails</h2>
+              <button className="btn-icon" onClick={() => setInvoiceEmailsModal(null)}>&#10005;</button>
+            </div>
+            <div className="modal-body">
+              <p style={{ marginBottom: 8 }}>
+                <strong>{invoiceEmailsModal.projectName}</strong> ({invoiceEmailsModal.projectId})
+              </p>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 16 }}>
+                These emails receive invoice notifications when a financial milestone is completed. Enter one per line or comma-separated.
+              </p>
+              <div className="form-group">
+                <label>Recipient Emails</label>
+                <textarea
+                  value={invoiceEmailsInput}
+                  onChange={e => setInvoiceEmailsInput(e.target.value)}
+                  placeholder="email@example.com&#10;another@example.com"
+                  rows={5}
+                  style={{ width: '100%', padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 6, fontFamily: 'inherit', fontSize: '0.9rem', resize: 'vertical' }}
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-outline" onClick={() => setInvoiceEmailsModal(null)}>Cancel</button>
+              <button className="btn btn-blue" onClick={saveInvoiceEmails}>Save Emails</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Workorder Modal with Milestones */}
       {workorderModal && (
         <div className="modal-overlay" onClick={() => setWorkorderModal(null)}>
@@ -2094,26 +2159,40 @@ export default function AdminDashboard() {
               {actionError && <div className="auth-error">{actionError}</div>}
 
               <h3 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: 8 }}>Employee Assignment</h3>
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
-                Select at least 1 employee. Each employee can have max 3 active projects.
-              </p>
+              <div className="inline-fields" style={{ marginBottom: 12 }}>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label style={{ fontSize: '0.8rem' }}>Max Employees on this Project</label>
+                  <input type="number" min={1} max={20} value={workorderMaxEmployees}
+                    onChange={e => setWorkorderMaxEmployees(Number(e.target.value))}
+                    style={{ width: 100 }} />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0, justifyContent: 'flex-end' }}>
+                  <label style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', marginTop: 20 }}>
+                    <input type="checkbox" checked={forceAssign} onChange={e => setForceAssign(e.target.checked)} />
+                    Override employee capacity limit
+                  </label>
+                </div>
+              </div>
               {loadingEmployees ? (
                 <p>Loading available employees...</p>
               ) : (
                 <div className="employee-list" style={{ maxHeight: 250, overflowY: 'auto', marginBottom: 20 }}>
-                  {availableEmployees.map(emp => (
+                  {availableEmployees.map(emp => {
+                    const atCap = !emp.available;
+                    const isDisabled = atCap && !forceAssign;
+                    return (
                     <label key={emp.employeeId}
-                      className={`employee-option ${selectedEmployees.includes(emp.employeeId) ? 'selected' : ''} ${!emp.available ? 'unavailable' : ''}`}>
+                      className={`employee-option ${selectedEmployees.includes(emp.employeeId) ? 'selected' : ''} ${isDisabled ? 'unavailable' : ''}`}>
                       <input type="checkbox" checked={selectedEmployees.includes(emp.employeeId)}
-                        onChange={() => toggleEmployee(emp.employeeId)} disabled={!emp.available} />
+                        onChange={() => toggleEmployee(emp.employeeId)} disabled={isDisabled} />
                       <div style={{ flex: 1 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <strong>{emp.name}</strong>
                           <code style={{ fontSize: '0.75rem' }}>{emp.employeeId}</code>
-                          {!emp.available && <span className="badge badge-unverified">MAX 3</span>}
+                          {atCap && <span className="badge badge-unverified" style={{ opacity: forceAssign ? 0.5 : 1 }}>AT CAPACITY</span>}
                         </div>
                         <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: 2 }}>
-                          {emp.activeProjectCount}/3 projects
+                          {emp.activeProjectCount}/{emp.maxProjects || 3} projects
                           {emp.credentials?.length > 0 && ` | ${emp.credentials.slice(0, 5).join(', ')}`}
                         </div>
                       </div>
@@ -2128,7 +2207,8 @@ export default function AdminDashboard() {
                         )}
                       </div>
                     </label>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 

@@ -470,6 +470,41 @@ export default function AdminDashboard() {
     });
   };
 
+  const exportClientContacts = () => {
+    // Group by client name + contact point, collect all their projects
+    const clientMap = {};
+    projects.forEach(p => {
+      const key = `${p.clientName || 'Unknown'}__${p.contactPoint?.mailId || p.contactPoint?.number || Math.random()}`;
+      if (!clientMap[key]) {
+        clientMap[key] = {
+          'Client Name': p.clientName || '',
+          'Contact Person': p.contactPoint?.name || '',
+          'Designation': p.contactPoint?.designation || '',
+          'Phone': p.contactPoint?.number || '',
+          'Email': p.contactPoint?.mailId || '',
+          'Vertical': p.vertical || '',
+          'Location': p.projectLocation || '',
+          'Client Sector': p.clientSector || '',
+          'Projects': [],
+          'Project IDs': []
+        };
+      }
+      clientMap[key]['Projects'].push(p.projectName);
+      clientMap[key]['Project IDs'].push(p.projectId);
+    });
+
+    const data = Object.values(clientMap).map(c => ({
+      ...c,
+      'Projects': c['Projects'].join('; '),
+      'Project IDs': c['Project IDs'].join('; ')
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Client Contacts');
+    XLSX.writeFile(wb, `client_contacts_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
   const exportToExcel = (list, sheetName) => {
     const data = list.map(p => ({
       'Project ID': p.projectId,
@@ -822,6 +857,13 @@ export default function AdminDashboard() {
           <div className="stat-value" style={{ color: 'var(--success)' }}>{fmtMoney(totalApproved)}</div>
           <div className="stat-label">Total Approved</div>
         </div>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+        <button className="btn btn-sm btn-outline" onClick={exportClientContacts}
+          title="Download Excel with all client names, contact persons, and emails">
+          Export Client Contacts
+        </button>
       </div>
 
       <div className="tabs">

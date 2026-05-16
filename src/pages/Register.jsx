@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 
 const VERTICALS = ['ESG', 'Green Building Certification', 'MEFP Design'];
@@ -11,8 +10,6 @@ export default function Register() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('employee');
-  const [cvFile, setCvFile] = useState(null);
-  const [cvParsed, setCvParsed] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { register } = useAuth();
@@ -49,41 +46,7 @@ export default function Register() {
       return;
     }
 
-    // Employee path: if CV is provided, parse it and pre-fill; otherwise go straight to manual entry
-    if (cvFile) {
-      setLoading(true);
-      try {
-        const formData = new FormData();
-        formData.append('cv', cvFile);
-        const res = await axios.post('/api/auth/parse-cv-preview', formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        });
-        const p = res.data.profile;
-        if (p) {
-          setProfileForm({
-            designation: p.designation || '',
-            yearsOfExperience: p.yearsOfExperience || '',
-            vertical: p.vertical || [],
-            contactNumber: p.contactNumber || '',
-            credentials: p.credentials || res.data.credentials || [],
-            qualifications: p.qualifications || [],
-            expertise: p.expertise || [],
-            pastProjects: p.pastProjects || [],
-            pastExperience: p.pastExperience || [],
-            professionalSummary: p.professionalSummary || ''
-          });
-        }
-        setCvParsed(true);
-        setStep(2);
-      } catch (err) {
-        setError(err.response?.data?.message || 'CV parsing failed. Please try again.');
-      } finally {
-        setLoading(false);
-      }
-    } else {
-      setCvParsed(false);
-      setStep(2);
-    }
+    setStep(2);
   };
 
   const handleStep2 = async (e) => {
@@ -91,7 +54,7 @@ export default function Register() {
     setError('');
     setLoading(true);
     try {
-      const user = await register(name, email, password, role, cvFile, profileForm);
+      const user = await register(name, email, password, role, null, profileForm);
       navigate('/employee');
     } catch (err) {
       setError(err.response?.data?.message || 'Registration failed');
@@ -124,9 +87,7 @@ export default function Register() {
               <span className="badge badge-active" style={{ fontSize: '0.72rem' }}>Step 2 of 2</span>
             </div>
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: 24 }}>
-              {cvParsed
-                ? 'We extracted this from your CV. Review and edit before creating your account.'
-                : 'Fill in your professional details to complete your profile.'}
+              Fill in your professional details to complete your profile.
             </p>
 
             {error && <div className="auth-error">{error}</div>}
@@ -349,26 +310,8 @@ export default function Register() {
               <option value="observer">Observer</option>
             </select>
           </div>
-          {role === 'employee' && (
-            <div className="form-group">
-              <label>Upload CV (Optional)</label>
-              <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: 8 }}>
-                Optionally upload your CV to auto-fill your profile, or fill it manually in the next step.
-              </p>
-              <input type="file" accept=".pdf,.txt,.doc,.docx"
-                onChange={e => setCvFile(e.target.files[0] || null)}
-                style={{ fontSize: '0.85rem' }} />
-              {cvFile && (
-                <div style={{ marginTop: 6, fontSize: '0.8rem', color: 'var(--accent)' }}>
-                  Selected: {cvFile.name}
-                </div>
-              )}
-            </div>
-          )}
           <button type="submit" className="btn-primary" disabled={loading}>
-            {loading
-              ? (role === 'employee' ? (cvFile ? 'Parsing CV...' : 'Please wait...') : 'Creating Account...')
-              : (role === 'employee' ? (cvFile ? 'Parse CV & Continue' : 'Continue to Profile') : 'Create Account')}
+            {loading ? 'Please wait...' : (role === 'employee' ? 'Continue to Profile' : 'Create Account')}
           </button>
         </form>
         <div className="auth-link">

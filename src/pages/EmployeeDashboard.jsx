@@ -20,9 +20,39 @@ export default function EmployeeDashboard() {
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileMsg, setProfileMsg] = useState('');
 
+  // Leave management
+  const [leaves, setLeaves] = useState([]);
+  const [leaveForm, setLeaveForm] = useState({ fromDate: '', toDate: '', reason: '', reportingHod: '' });
+  const [leaveSubmitting, setLeaveSubmitting] = useState(false);
+  const [leaveMsg, setLeaveMsg] = useState('');
+
   useEffect(() => {
     fetchData();
+    fetchLeaves();
   }, []);
+
+  const fetchLeaves = async () => {
+    try {
+      const res = await axios.get('/api/leaves/mine');
+      setLeaves(res.data);
+    } catch {}
+  };
+
+  const submitLeave = async (e) => {
+    e.preventDefault();
+    setLeaveSubmitting(true);
+    setLeaveMsg('');
+    try {
+      await axios.post('/api/leaves', leaveForm);
+      setLeaveMsg('Leave application submitted successfully.');
+      setLeaveForm({ fromDate: '', toDate: '', reason: '', reportingHod: '' });
+      fetchLeaves();
+    } catch (err) {
+      setLeaveMsg(err.response?.data?.message || 'Failed to submit leave application');
+    } finally {
+      setLeaveSubmitting(false);
+    }
+  };
 
   const fetchData = async () => {
     const res = await axios.get('/api/projects');
@@ -202,6 +232,9 @@ export default function EmployeeDashboard() {
         </button>
         <button className={`tab ${tab === 'profile' ? 'active' : ''}`} onClick={() => setTab('profile')}>
           My Profile
+        </button>
+        <button className={`tab ${tab === 'leaves' ? 'active' : ''}`} onClick={() => { setTab('leaves'); fetchLeaves(); }}>
+          Leave Management {leaves.filter(l => l.status === 'pending').length > 0 && `(${leaves.filter(l => l.status === 'pending').length} pending)`}
         </button>
       </div>
 
@@ -638,6 +671,94 @@ export default function EmployeeDashboard() {
               )}
             </div>
 
+          </div>
+        </div>
+      )}
+      {tab === 'leaves' && (
+        <div>
+          {/* Apply Form */}
+          <div className="card" style={{ marginBottom: 20 }}>
+            <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: 16 }}>Apply for Leave</h3>
+            {leaveMsg && (
+              <div className={leaveMsg.includes('success') ? 'auth-info' : 'auth-error'} style={{ marginBottom: 12 }}>
+                {leaveMsg}
+              </div>
+            )}
+            <form onSubmit={submitLeave}>
+              <div className="inline-fields">
+                <div className="form-group">
+                  <label>From Date</label>
+                  <input type="date" value={leaveForm.fromDate} required
+                    onChange={e => setLeaveForm({ ...leaveForm, fromDate: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label>To Date</label>
+                  <input type="date" value={leaveForm.toDate} required
+                    min={leaveForm.fromDate}
+                    onChange={e => setLeaveForm({ ...leaveForm, toDate: e.target.value })} />
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Reporting HOD</label>
+                <input type="text" value={leaveForm.reportingHod} required
+                  placeholder="Name of your reporting Head of Department"
+                  onChange={e => setLeaveForm({ ...leaveForm, reportingHod: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label>Reason for Leave</label>
+                <textarea value={leaveForm.reason} required rows={3}
+                  placeholder="Describe the reason for your leave..."
+                  style={{ width: '100%', padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 6, fontFamily: 'inherit', fontSize: '0.9rem', resize: 'vertical' }}
+                  onChange={e => setLeaveForm({ ...leaveForm, reason: e.target.value })} />
+              </div>
+              <button type="submit" className="btn btn-blue" disabled={leaveSubmitting}>
+                {leaveSubmitting ? 'Submitting...' : 'Submit Leave Application'}
+              </button>
+            </form>
+          </div>
+
+          {/* Leave History */}
+          <div className="card">
+            <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: 16 }}>My Leave Applications</h3>
+            {leaves.length === 0 ? (
+              <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: 24 }}>No leave applications yet.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {leaves.map(l => {
+                  const days = Math.ceil((new Date(l.toDate) - new Date(l.fromDate)) / 86400000) + 1;
+                  const statusColor = l.status === 'approved' ? 'var(--success)' : l.status === 'denied' ? 'var(--error)' : 'var(--warning)';
+                  return (
+                    <div key={l._id} style={{ padding: '14px 16px', border: '1px solid var(--border)', borderRadius: 8, borderLeft: `4px solid ${statusColor}` }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8 }}>
+                        <div>
+                          <div style={{ fontWeight: 600 }}>
+                            {new Date(l.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                            {' — '}
+                            {new Date(l.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                            <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginLeft: 8 }}>({days} day{days !== 1 ? 's' : ''})</span>
+                          </div>
+                          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: 4 }}>HOD: {l.reportingHod}</div>
+                          <div style={{ fontSize: '0.85rem', marginTop: 4 }}>{l.reason}</div>
+                        </div>
+                        <span style={{ padding: '3px 10px', borderRadius: 99, fontSize: '0.75rem', fontWeight: 700, background: `${statusColor}18`, color: statusColor, border: `1px solid ${statusColor}40`, textTransform: 'capitalize', whiteSpace: 'nowrap' }}>
+                          {l.status}
+                        </span>
+                      </div>
+                      {(l.denialReason || l.adminNotes) && (
+                        <div style={{ marginTop: 10, padding: '8px 12px', background: 'var(--bg)', borderRadius: 6, fontSize: '0.85rem' }}>
+                          {l.denialReason && <div><strong>Reason:</strong> {l.denialReason}</div>}
+                          {l.adminNotes && <div style={{ marginTop: 4 }}><strong>Notes:</strong> {l.adminNotes}</div>}
+                          {l.resolvedBy && <div style={{ marginTop: 4, color: 'var(--text-secondary)', fontSize: '0.78rem' }}>Resolved by {l.resolvedBy}</div>}
+                        </div>
+                      )}
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 6 }}>
+                        Applied: {new Date(l.appliedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}

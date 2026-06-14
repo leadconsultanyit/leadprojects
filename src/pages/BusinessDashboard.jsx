@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import ProjectForm from '../components/ProjectForm';
+import RevenueDashboard from '../components/RevenueDashboard';
+import { fuzzyFilterSort } from '../utils/fuzzy';
 import * as XLSX from 'xlsx';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -98,10 +100,55 @@ export default function BusinessDashboard() {
     }
   };
 
+  // Universal stage transition — works from any current stage.
+  const STAGE_OPTIONS = [
+    { value: 'proposal', label: 'Proposal' },
+    { value: 'won', label: 'Won' },
+    { value: 'workorder', label: 'Work Order' },
+    { value: 'workorder-held', label: 'Work Order (Held)' },
+    { value: 'hold', label: 'Hold' },
+    { value: 'lost', label: 'Lost / Failed' }
+  ];
+
+  const changeStage = async (project, targetStage, payload = {}) => {
+    try {
+      await axios.put(`/api/projects/${project.projectId}/change-stage`, { targetStage, ...payload });
+      fetchData();
+    } catch (err) { alert(err.response?.data?.message || 'Failed to change stage'); }
+  };
+
+  const handleStageSelect = (project, targetStage) => {
+    if (!targetStage || targetStage === project.pipelineStatus) return;
+    if (targetStage === 'won') {
+      setWonModal(project); setWonBudget(project.approvedBudget ? String(project.approvedBudget) : ''); setActionError('');
+    } else if (targetStage === 'lost') {
+      setLostModal(project); setLostReason(''); setLostReasonOther(''); setLostComments(''); setActionError('');
+    } else if (targetStage === 'workorder') {
+      openWorkorderModal(project);
+    } else {
+      const label = STAGE_OPTIONS.find(s => s.value === targetStage)?.label || targetStage;
+      if (window.confirm(`Move "${project.projectName}" to ${label}?`)) changeStage(project, targetStage);
+    }
+  };
+
+  const renderStageMover = (project) => (
+    <select
+      value=""
+      onChange={e => { handleStageSelect(project, e.target.value); e.target.value = ''; }}
+      title="Move this project to another stage"
+      style={{ padding: '5px 8px', border: '1px solid var(--info)', borderRadius: 6, fontSize: '0.8rem', color: 'var(--info)', fontWeight: 600, background: 'var(--surface)', cursor: 'pointer' }}
+    >
+      <option value="">Move to ▾</option>
+      {STAGE_OPTIONS.filter(s => s.value !== project.pipelineStatus).map(s => (
+        <option key={s.value} value={s.value}>{s.label}</option>
+      ))}
+    </select>
+  );
+
   const moveToWon = async () => {
     if (!wonBudget || Number(wonBudget) <= 0) { setActionError('Enter a valid budget'); return; }
     try {
-      await axios.put(`/api/projects/${wonModal.projectId}/move-to-won`, { approvedBudget: Number(wonBudget) });
+      await axios.put(`/api/projects/${wonModal.projectId}/change-stage`, { targetStage: 'won', approvedBudget: Number(wonBudget) });
       setWonModal(null); setWonBudget(''); setActionError(''); fetchData();
     } catch (err) { setActionError(err.response?.data?.message || 'Failed'); }
   };
@@ -110,7 +157,8 @@ export default function BusinessDashboard() {
     if (!lostReason) { setActionError('Select a loss reason'); return; }
     if (lostReason === 'Other' && !lostReasonOther.trim()) { setActionError('Specify the loss reason'); return; }
     try {
-      await axios.put(`/api/projects/${lostModal.projectId}/move-to-lost`, {
+      await axios.put(`/api/projects/${lostModal.projectId}/change-stage`, {
+        targetStage: 'lost',
         lossReason: lostReason === 'Other' ? lostReasonOther : lostReason,
         lossReasonOther: lostReason === 'Other' ? lostReasonOther : '',
         lossComments
@@ -208,7 +256,8 @@ export default function BusinessDashboard() {
           .map(tm => ({ ...tm, status: 'pending', expectedDate: tm.expectedDate || null }))
       }));
     try {
-      await axios.put(`/api/projects/${workorderModal.projectId}/move-to-workorder`, {
+      await axios.put(`/api/projects/${workorderModal.projectId}/change-stage`, {
+        targetStage: 'workorder',
         assignedEmployeeIds: selectedEmployees,
         financialMilestones: milestones
       });
@@ -265,7 +314,7 @@ export default function BusinessDashboard() {
   };
 
   const applyPipelineFilter = (list) => {
-    return list.filter(p => {
+    const filtered = list.filter(p => {
       if (pipelineFilter.month) {
         const d = p.proposalMonth || p.createdAt;
         if (!d) return false;
@@ -280,12 +329,14 @@ export default function BusinessDashboard() {
         if (!(cp.name || '').toLowerCase().includes(q) && !(cp.mailId || '').toLowerCase().includes(q) && !(cp.number || '').includes(q)) return false;
       }
       if (pipelineFilter.lossReason && p.lossReason !== pipelineFilter.lossReason) return false;
-      if (pipelineFilter.search) {
-        const s = pipelineFilter.search.toLowerCase();
-        if (!p.projectName.toLowerCase().includes(s) && !p.clientName?.toLowerCase().includes(s) && !p.projectId.toLowerCase().includes(s)) return false;
-      }
       return true;
     });
+    // Fuzzy, ranked search (tolerant of typos; best matches first)
+    return fuzzyFilterSort(
+      pipelineFilter.search,
+      filtered,
+      p => [p.projectName, p.clientName, p.projectId]
+    );
   };
 
   const exportToExcel = (list, sheetName) => {
@@ -461,7 +512,10 @@ export default function BusinessDashboard() {
           Workorders ({workorders.length})
         </button>
         <button className={`tab ${tab === 'deltas' ? 'active' : ''}`} onClick={() => setTab('deltas')}>Budget Deltas</button>
+        <button className={`tab ${tab === 'revenue' ? 'active' : ''}`} onClick={() => setTab('revenue')}>Revenue Dashboard</button>
       </div>
+
+      {tab === 'revenue' && <RevenueDashboard />}
 
       {tab === 'pipeline' && (
         <div>
@@ -517,6 +571,9 @@ export default function BusinessDashboard() {
                   </div>
                   {renderContactPoint(p.contactPoint)}
                   {renderMetaTags(p)}
+                  <div className="btn-group" style={{ marginTop: 12 }}>
+                    {renderStageMover(p)}
+                  </div>
                 </div>
               );
             })}
@@ -557,6 +614,7 @@ export default function BusinessDashboard() {
                     <button className="btn btn-sm btn-green" onClick={() => { setWonModal(p); setWonBudget(''); setActionError(''); }}>Won</button>
                     <button className="btn btn-sm" style={{ background: 'var(--warning)', color: '#fff' }} onClick={() => moveToHold(p)}>Hold</button>
                     <button className="btn btn-sm btn-red" onClick={() => { setLostModal(p); setLostReason(''); setLostReasonOther(''); setLostComments(''); setActionError(''); }}>Lost</button>
+                    {renderStageMover(p)}
                     <button className="btn btn-sm btn-outline" onClick={() => { setEditingProject(p); setShowProjectModal(true); }}>Edit</button>
                     <button className="btn btn-sm btn-outline"
                       onClick={() => { setRevisionModal(p); setRevisionAmount(''); setRevisionNotes(''); setActionError(''); }}>
@@ -617,6 +675,7 @@ export default function BusinessDashboard() {
                 {renderMetaTags(p)}
                 <div className="btn-group" style={{ marginTop: 12 }}>
                   <button className="btn btn-sm btn-blue" onClick={() => openWorkorderModal(p)}>Move to Workorder</button>
+                  {renderStageMover(p)}
                 </div>
               </div>
             ))}
@@ -637,6 +696,7 @@ export default function BusinessDashboard() {
                   <button className="btn btn-sm btn-blue" onClick={() => moveToProposal(p)}>Back to Proposal</button>
                   <button className="btn btn-sm btn-green" onClick={() => { setWonModal(p); setWonBudget(''); setActionError(''); }}>Won</button>
                   <button className="btn btn-sm btn-red" onClick={() => { setLostModal(p); setLostReason(''); setLostReasonOther(''); setLostComments(''); setActionError(''); }}>Lost</button>
+                  {renderStageMover(p)}
                 </div>
               </div>
             ))}
@@ -660,6 +720,9 @@ export default function BusinessDashboard() {
                 </div>
                 {renderContactPoint(p.contactPoint)}
                 {renderMetaTags(p)}
+                <div className="btn-group" style={{ marginTop: 12 }}>
+                  {renderStageMover(p)}
+                </div>
               </div>
             ))}
           </div>

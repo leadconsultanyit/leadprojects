@@ -112,6 +112,12 @@ export default function ProposalDocumentDashboard() {
   // Reference projects
   const [allRefProjects, setAllRefProjects] = useState([]);
 
+  // Category labels (renamable, persisted globally via /api/settings)
+  const [categoryLabels, setCategoryLabels] = useState(CATEGORY_LABELS);
+  const [editingCategory, setEditingCategory] = useState(null); // category key being renamed
+  const [categoryLabelDraft, setCategoryLabelDraft] = useState('');
+  const isAdmin = user?.role === 'admin';
+
   // Editor state (mirrors selectedDoc fields for editing)
   const [overrides, setOverrides] = useState({});
   const [selectedProjects, setSelectedProjects] = useState({
@@ -132,7 +138,33 @@ export default function ProposalDocumentDashboard() {
   useEffect(() => {
     fetchDocs();
     fetchRefProjects();
+    fetchSettings();
   }, []);
+
+  const fetchSettings = async () => {
+    try {
+      const res = await axios.get('/api/settings');
+      if (res.data?.categoryLabels) {
+        setCategoryLabels({ ...CATEGORY_LABELS, ...res.data.categoryLabels });
+      }
+    } catch (err) {
+      // fall back to defaults
+    }
+  };
+
+  const saveCategoryLabel = async (cat) => {
+    const label = categoryLabelDraft.trim();
+    if (!label) { setEditingCategory(null); return; }
+    const next = { ...categoryLabels, [cat]: label };
+    setCategoryLabels(next);
+    setEditingCategory(null);
+    try {
+      await axios.put('/api/settings', { categoryLabels: next });
+    } catch (err) {
+      alert('Failed to save category name');
+      fetchSettings();
+    }
+  };
 
   // Auto-select from URL param — only when the doc isn't already open
   useEffect(() => {
@@ -373,6 +405,14 @@ export default function ProposalDocumentDashboard() {
           />
         </div>
         <div className="form-group" style={{ margin: 0 }}>
+          <label style={{ fontSize: '0.8rem' }}>Rating System</label>
+          <input
+            value={overrides.ratingSystem || ''}
+            onChange={e => setOverrides(o => ({ ...o, ratingSystem: e.target.value }))}
+            placeholder="e.g., LEED v4.1 for Cities, IGBC Green Campus"
+          />
+        </div>
+        <div className="form-group" style={{ margin: 0 }}>
           <label style={{ fontSize: '0.8rem' }}>Project Description (replaces [project])</label>
           <input
             value={overrides.projectDescription || ''}
@@ -465,10 +505,36 @@ export default function ProposalDocumentDashboard() {
               borderBottom: '1px solid var(--border)',
               display: 'flex', alignItems: 'center', justifyContent: 'space-between'
             }}>
-              <div>
-                <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{CATEGORY_LABELS[cat]}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {editingCategory === cat ? (
+                  <>
+                    <input
+                      autoFocus
+                      value={categoryLabelDraft}
+                      onChange={e => setCategoryLabelDraft(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') saveCategoryLabel(cat); if (e.key === 'Escape') setEditingCategory(null); }}
+                      style={{ fontWeight: 700, fontSize: '0.9rem', border: '1px solid var(--info)', borderRadius: 5, padding: '2px 8px' }}
+                    />
+                    <button className="btn btn-sm btn-blue" style={{ fontSize: '0.72rem', padding: '2px 8px' }}
+                      onClick={() => saveCategoryLabel(cat)}>Save</button>
+                    <button className="btn btn-sm btn-outline" style={{ fontSize: '0.72rem', padding: '2px 8px' }}
+                      onClick={() => setEditingCategory(null)}>Cancel</button>
+                  </>
+                ) : (
+                  <>
+                    <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{categoryLabels[cat]}</span>
+                    {isAdmin && (
+                      <button
+                        title="Rename category"
+                        onClick={() => { setEditingCategory(cat); setCategoryLabelDraft(categoryLabels[cat]); }}
+                        style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '0.85rem', padding: '0 2px' }}>
+                        ✎
+                      </button>
+                    )}
+                  </>
+                )}
                 <span style={{
-                  marginLeft: 8, fontSize: '0.75rem', fontWeight: 600,
+                  marginLeft: 4, fontSize: '0.75rem', fontWeight: 600,
                   padding: '1px 8px', borderRadius: 99,
                   background: selectedCount > 0 ? '#DCFCE7' : '#F3F4F6',
                   color: selectedCount > 0 ? '#166534' : 'var(--text-secondary)'
@@ -600,7 +666,7 @@ export default function ProposalDocumentDashboard() {
       const res = await axios.post('/api/proposal-documents/expand-milestones', {
         milestones: targetMilestones.map((m, i) => ({ ...m, index: i })),
         projectName: selectedDoc.projectName,
-        ratingSystem: selectedDoc.templateName
+        ratingSystem: overrides.ratingSystem || selectedDoc.templateName
       });
       const expanded = res.data.milestones;
       if (onlyIdx !== null) {
@@ -828,6 +894,29 @@ export default function ProposalDocumentDashboard() {
     setScopeOfWork(prev => prev.map((s, i) => i === sIdx ? { ...s, [field]: value } : s));
   };
 
+  // Reorder a whole scope section up/down
+  const moveScopeSection = (sIdx, dir) => {
+    setScopeOfWork(prev => {
+      const next = [...prev];
+      const target = sIdx + dir;
+      if (target < 0 || target >= next.length) return prev;
+      [next[sIdx], next[target]] = [next[target], next[sIdx]];
+      return next;
+    });
+  };
+
+  // Reorder an item within a section up/down
+  const moveScopeItem = (sIdx, iIdx, dir) => {
+    setScopeOfWork(prev => prev.map((s, i) => {
+      if (i !== sIdx) return s;
+      const items = [...s.items];
+      const target = iIdx + dir;
+      if (target < 0 || target >= items.length) return s;
+      [items[iIdx], items[target]] = [items[target], items[iIdx]];
+      return { ...s, items };
+    }));
+  };
+
   const updateScopeItem = (sIdx, iIdx, field, value) => {
     setScopeOfWork(prev => prev.map((s, i) =>
       i === sIdx ? { ...s, items: s.items.map((it, j) => j === iIdx ? { ...it, [field]: value } : it) } : s
@@ -917,6 +1006,14 @@ export default function ProposalDocumentDashboard() {
                 }}>custom</span>
               )}
               <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                <button className="btn btn-sm btn-outline" style={{ fontSize: '0.7rem', padding: '2px 6px' }}
+                  disabled={sIdx === 0} onClick={() => moveScopeSection(sIdx, -1)} title="Move section up">
+                  ▲
+                </button>
+                <button className="btn btn-sm btn-outline" style={{ fontSize: '0.7rem', padding: '2px 6px' }}
+                  disabled={sIdx === scopeOfWork.length - 1} onClick={() => moveScopeSection(sIdx, 1)} title="Move section down">
+                  ▼
+                </button>
                 <button className="btn btn-sm btn-outline" style={{ fontSize: '0.7rem', padding: '2px 7px' }}
                   onClick={() => setScopeOfWork(prev => prev.map((s, i) => i === sIdx ? { ...s, items: s.items.map(it => ({ ...it, checked: true })) } : s))}>
                   All
@@ -945,6 +1042,18 @@ export default function ProposalDocumentDashboard() {
             <div style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
               {section.items.map((item, iIdx) => (
                 <div key={iIdx} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0, marginTop: 2 }}>
+                    <button onClick={() => moveScopeItem(sIdx, iIdx, -1)} disabled={iIdx === 0}
+                      title="Move up"
+                      style={{ border: 'none', background: 'none', cursor: iIdx === 0 ? 'default' : 'pointer', color: iIdx === 0 ? 'var(--border)' : 'var(--text-secondary)', fontSize: '0.6rem', padding: 0, lineHeight: 1 }}>
+                      ▲
+                    </button>
+                    <button onClick={() => moveScopeItem(sIdx, iIdx, 1)} disabled={iIdx === section.items.length - 1}
+                      title="Move down"
+                      style={{ border: 'none', background: 'none', cursor: iIdx === section.items.length - 1 ? 'default' : 'pointer', color: iIdx === section.items.length - 1 ? 'var(--border)' : 'var(--text-secondary)', fontSize: '0.6rem', padding: 0, lineHeight: 1 }}>
+                      ▼
+                    </button>
+                  </div>
                   <input
                     type="checkbox"
                     checked={item.checked}
@@ -1144,6 +1253,10 @@ export default function ProposalDocumentDashboard() {
               <span style={{ fontWeight: 600 }}>{templateName}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Rating System:</span>
+              <span style={{ fontWeight: 600 }}>{overrides.ratingSystem || 'Not set'}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: 'var(--text-secondary)' }}>Contact Person:</span>
               <span style={{ fontWeight: 600 }}>{overrides.contactName || 'Not set'}</span>
             </div>
@@ -1161,7 +1274,7 @@ export default function ProposalDocumentDashboard() {
             </div>
             {CATEGORY_KEYS.map(cat => (
               <div key={cat} style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: 12 }}>
-                <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{CATEGORY_LABELS[cat]}:</span>
+                <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{categoryLabels[cat]}:</span>
                 <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>{countSelected(cat)} projects</span>
               </div>
             ))}

@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import ProjectForm from '../components/ProjectForm';
+import RevenueDashboard from '../components/RevenueDashboard';
+import { fuzzyFilterSort } from '../utils/fuzzy';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, AreaChart, Area, ComposedChart
@@ -52,14 +54,6 @@ export default function AdminDashboard() {
   const [invoiceEmailsModal, setInvoiceEmailsModal] = useState(null);
   const [invoiceEmailsInput, setInvoiceEmailsInput] = useState('');
 
-  // Leave management
-  const [allLeaves, setAllLeaves] = useState([]);
-  const [leaveFilter, setLeaveFilter] = useState({ status: '', employeeId: '', fromDate: '', toDate: '' });
-  const [leaveActionModal, setLeaveActionModal] = useState(null);
-  const [leaveActionNotes, setLeaveActionNotes] = useState('');
-  const [leaveDenialReason, setLeaveDenialReason] = useState('');
-  const [leavesLoading, setLeavesLoading] = useState(false);
-
   // Universal pipeline filtering
   const [pipelineFilter, setPipelineFilter] = useState({ month: '', vertical: '', contactPoint: '', leadOffice: '', search: '', lossReason: '', certificationType: '' });
 
@@ -91,7 +85,6 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     if (tab === 'completed') fetchCompletedProjects();
-    if (tab === 'leaves') fetchAllLeaves();
   }, [tab]);
 
   const fetchUsers = async () => { setUsers((await axios.get('/api/users')).data); };
@@ -133,10 +126,57 @@ export default function AdminDashboard() {
     await axios.delete(`/api/projects/${projectId}`); fetchProjects();
   };
 
+  // Universal stage transition — works from any current stage.
+  const STAGE_OPTIONS = [
+    { value: 'proposal', label: 'Proposal' },
+    { value: 'won', label: 'Won' },
+    { value: 'workorder', label: 'Work Order' },
+    { value: 'workorder-held', label: 'Work Order (Held)' },
+    { value: 'hold', label: 'Hold' },
+    { value: 'lost', label: 'Lost / Failed' }
+  ];
+
+  const changeStage = async (project, targetStage, payload = {}) => {
+    try {
+      await axios.put(`/api/projects/${project.projectId}/change-stage`, { targetStage, ...payload });
+      fetchProjects();
+    } catch (err) { alert(err.response?.data?.message || 'Failed to change stage'); }
+  };
+
+  // Route a chosen target stage to the right modal (for stages needing input)
+  // or directly transition (for stages without requirements).
+  const handleStageSelect = (project, targetStage) => {
+    if (!targetStage || targetStage === project.pipelineStatus) return;
+    if (targetStage === 'won') {
+      setWonModal(project); setWonBudget(project.approvedBudget ? String(project.approvedBudget) : ''); setActionError('');
+    } else if (targetStage === 'lost') {
+      setLostModal(project); setLostReason(''); setLostReasonOther(''); setLostComments(''); setActionError('');
+    } else if (targetStage === 'workorder') {
+      openWorkorderModal(project);
+    } else {
+      const label = STAGE_OPTIONS.find(s => s.value === targetStage)?.label || targetStage;
+      if (window.confirm(`Move "${project.projectName}" to ${label}?`)) changeStage(project, targetStage);
+    }
+  };
+
+  const renderStageMover = (project) => (
+    <select
+      value=""
+      onChange={e => { handleStageSelect(project, e.target.value); e.target.value = ''; }}
+      title="Move this project to another stage"
+      style={{ padding: '5px 8px', border: '1px solid var(--info)', borderRadius: 6, fontSize: '0.8rem', color: 'var(--info)', fontWeight: 600, background: 'var(--surface)', cursor: 'pointer' }}
+    >
+      <option value="">Move to ▾</option>
+      {STAGE_OPTIONS.filter(s => s.value !== project.pipelineStatus).map(s => (
+        <option key={s.value} value={s.value}>{s.label}</option>
+      ))}
+    </select>
+  );
+
   const moveToWon = async () => {
     if (!wonBudget || Number(wonBudget) <= 0) { setActionError('Enter a valid budget'); return; }
     try {
-      await axios.put(`/api/projects/${wonModal.projectId}/move-to-won`, { approvedBudget: Number(wonBudget) });
+      await axios.put(`/api/projects/${wonModal.projectId}/change-stage`, { targetStage: 'won', approvedBudget: Number(wonBudget) });
       setWonModal(null); setWonBudget(''); setActionError(''); fetchProjects();
     } catch (err) { setActionError(err.response?.data?.message || 'Failed'); }
   };
@@ -145,7 +185,8 @@ export default function AdminDashboard() {
     if (!lostReason) { setActionError('Select a loss reason'); return; }
     if (lostReason === 'Other' && !lostReasonOther.trim()) { setActionError('Specify the loss reason'); return; }
     try {
-      await axios.put(`/api/projects/${lostModal.projectId}/move-to-lost`, {
+      await axios.put(`/api/projects/${lostModal.projectId}/change-stage`, {
+        targetStage: 'lost',
         lossReason: lostReason === 'Other' ? lostReasonOther : lostReason,
         lossReasonOther: lostReason === 'Other' ? lostReasonOther : '',
         lossComments: lostComments
@@ -298,7 +339,8 @@ export default function AdminDashboard() {
           .map(tm => ({ ...tm, status: 'pending', expectedDate: tm.expectedDate || null }))
       }));
     try {
-      await axios.put(`/api/projects/${workorderModal.projectId}/move-to-workorder`, {
+      await axios.put(`/api/projects/${workorderModal.projectId}/change-stage`, {
+        targetStage: 'workorder',
         assignedEmployeeIds: selectedEmployees,
         financialMilestones: milestones,
         maxEmployees: workorderMaxEmployees,
@@ -365,7 +407,7 @@ export default function AdminDashboard() {
     setCompletedLoading(true);
     try {
       const params = {};
-      if (f.search) params.search = f.search;
+      // search is handled client-side (fuzzy); other filters stay server-side
       if (f.ratingSystem) params.ratingSystem = f.ratingSystem;
       if (f.buildingType) params.buildingType = f.buildingType;
       if (f.location) params.location = f.location;
@@ -452,7 +494,7 @@ export default function AdminDashboard() {
   };
 
   const applyPipelineFilter = (list) => {
-    return list.filter(p => {
+    const filtered = list.filter(p => {
       if (pipelineFilter.month) {
         const d = p.proposalMonth || p.createdAt;
         if (!d) return false;
@@ -471,12 +513,14 @@ export default function AdminDashboard() {
         const ct = pipelineFilter.certificationType.toLowerCase();
         if (!(p.certificationType || []).some(c => c.toLowerCase().includes(ct))) return false;
       }
-      if (pipelineFilter.search) {
-        const s = pipelineFilter.search.toLowerCase();
-        if (!p.projectName.toLowerCase().includes(s) && !p.clientName?.toLowerCase().includes(s) && !p.projectId.toLowerCase().includes(s)) return false;
-      }
       return true;
     });
+    // Fuzzy, ranked search (tolerant of typos; best matches first)
+    return fuzzyFilterSort(
+      pipelineFilter.search,
+      filtered,
+      p => [p.projectName, p.clientName, p.projectId]
+    );
   };
 
   const exportClientContacts = () => {
@@ -512,66 +556,6 @@ export default function AdminDashboard() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Client Contacts');
     XLSX.writeFile(wb, `client_contacts_${new Date().toISOString().split('T')[0]}.xlsx`);
-  };
-
-  const fetchAllLeaves = async (filter) => {
-    const f = filter !== undefined ? filter : leaveFilter;
-    setLeavesLoading(true);
-    try {
-      const params = {};
-      if (f.status) params.status = f.status;
-      if (f.employeeId) params.employeeId = f.employeeId;
-      if (f.fromDate) params.fromDate = f.fromDate;
-      if (f.toDate) params.toDate = f.toDate;
-      const res = await axios.get('/api/leaves', { params });
-      setAllLeaves(res.data);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLeavesLoading(false);
-    }
-  };
-
-  const approveLeave = async () => {
-    try {
-      await axios.put(`/api/leaves/${leaveActionModal.leave._id}/approve`, { adminNotes: leaveActionNotes });
-      setLeaveActionModal(null); setLeaveActionNotes(''); fetchAllLeaves();
-    } catch (err) { alert(err.response?.data?.message || 'Failed to approve leave'); }
-  };
-
-  const denyLeave = async () => {
-    if (!leaveDenialReason.trim()) { alert('Denial reason is required'); return; }
-    try {
-      await axios.put(`/api/leaves/${leaveActionModal.leave._id}/deny`, {
-        denialReason: leaveDenialReason,
-        adminNotes: leaveActionNotes
-      });
-      setLeaveActionModal(null); setLeaveActionNotes(''); setLeaveDenialReason(''); fetchAllLeaves();
-    } catch (err) { alert(err.response?.data?.message || 'Failed to deny leave'); }
-  };
-
-  const exportLeavesExcel = () => {
-    const dateStr = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
-    const rows = allLeaves.map(l => ({
-      'Employee ID': l.employeeId,
-      'Employee Name': l.employeeName,
-      'Employee Email': l.employeeEmail,
-      'Reporting HOD': l.reportingHod,
-      'From Date': dateStr(l.fromDate),
-      'To Date': dateStr(l.toDate),
-      'Days': Math.ceil((new Date(l.toDate) - new Date(l.fromDate)) / (1000 * 60 * 60 * 24)) + 1,
-      'Reason': l.reason,
-      'Status': l.status,
-      'Denial Reason': l.denialReason || '',
-      'Admin Notes': l.adminNotes || '',
-      'Applied At': dateStr(l.appliedAt),
-      'Resolved At': dateStr(l.resolvedAt),
-      'Resolved By': l.resolvedBy || ''
-    }));
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Leaves');
-    XLSX.writeFile(wb, `leaves_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const exportToExcel = (list, sheetName) => {
@@ -619,6 +603,12 @@ export default function AdminDashboard() {
   const filteredHoldProjects = applyPipelineFilter(holdProjects);
   const filteredLostProjects = applyPipelineFilter(lostProjects);
   const filteredAllProjects = applyPipelineFilter(projects);
+
+  const displayedCompletedProjects = fuzzyFilterSort(
+    completedFilter.search,
+    completedProjects,
+    p => [p.projectName, p.clientName, p.location, p.ratingSystem, p.certificationType, p.woReference, p.concernPerson]
+  );
 
   const activeFilteredList = pipelineTab === 'all' ? filteredAllProjects
     : pipelineTab === 'proposals' ? filteredProposals
@@ -892,6 +882,7 @@ export default function AdminDashboard() {
       {renderMetaTags(p)}
       <div className="btn-group" style={{ marginTop: 12 }}>
         {actions}
+        {renderStageMover(p)}
         <button className="btn btn-sm btn-outline"
           onClick={() => { setEditingProject(p); setShowProjectModal(true); }}>Edit</button>
         <button className="btn btn-sm btn-red" onClick={() => deleteProject(p.projectId)}>Delete</button>
@@ -951,14 +942,13 @@ export default function AdminDashboard() {
         <button className={`tab ${tab === 'completed' ? 'active' : ''}`} onClick={() => setTab('completed')}>
           Completed Projects
         </button>
-        <button className={`tab ${tab === 'leaves' ? 'active' : ''}`} onClick={() => setTab('leaves')}>
-          Leaves {allLeaves.filter(l => l.status === 'pending').length > 0 && (
-            <span style={{ background: 'var(--warning)', color: '#fff', borderRadius: 10, padding: '1px 7px', fontSize: '0.75rem', marginLeft: 4 }}>
-              {allLeaves.filter(l => l.status === 'pending').length}
-            </span>
-          )}
+        <button className={`tab ${tab === 'revenue' ? 'active' : ''}`} onClick={() => setTab('revenue')}>
+          Revenue Dashboard
         </button>
       </div>
+
+      {/* ========== REVENUE DASHBOARD TAB ========== */}
+      {tab === 'revenue' && <RevenueDashboard />}
 
       {/* ========== DASHBOARD TAB ========== */}
       {tab === 'dashboard' && (
@@ -1317,6 +1307,9 @@ export default function AdminDashboard() {
                   </div>
                   {renderContactPoint(p.contactPoint)}
                   {renderMetaTags(p)}
+                  <div className="btn-group" style={{ marginTop: 12 }}>
+                    {renderStageMover(p)}
+                  </div>
                 </div>
               );
             })}
@@ -1468,6 +1461,7 @@ export default function AdminDashboard() {
                         setInvoiceEmailsModal(p);
                         setInvoiceEmailsInput((p.invoiceRecipientEmails || []).join('\n'));
                       }}>Invoice Emails</button>
+                    {renderStageMover(p)}
                     <button className="btn btn-sm btn-outline"
                       onClick={() => { setEditingProject(p); setShowProjectModal(true); }}>Edit</button>
                     <button className="btn btn-sm btn-red" onClick={() => deleteProject(p.projectId)}>Delete</button>
@@ -1682,7 +1676,7 @@ export default function AdminDashboard() {
           <div className="card" style={{ padding: 0 }}>
             {completedLoading ? (
               <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>Loading...</div>
-            ) : completedProjects.length === 0 ? (
+            ) : displayedCompletedProjects.length === 0 ? (
               <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>
                 No completed projects. Import an Excel file or mark a pipeline project as completed.
               </div>
@@ -1708,7 +1702,7 @@ export default function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {completedProjects.map(p => (
+                    {displayedCompletedProjects.map(p => (
                       <tr key={p._id}>
                         <td><strong>{p.projectName || '-'}</strong></td>
                         <td>{p.location || '-'}</td>
@@ -2219,204 +2213,6 @@ export default function AdminDashboard() {
                 disabled={reassignEmployees.length < 1}>
                 Save ({reassignEmployees.length} selected)
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ========== LEAVES TAB ========== */}
-      {tab === 'leaves' && (
-        <div>
-          <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-            <h2 style={{ flex: 1, fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>
-              Leave Applications <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', fontWeight: 400 }}>({allLeaves.length})</span>
-            </h2>
-            <button className="btn btn-sm btn-outline" onClick={exportLeavesExcel} disabled={allLeaves.length === 0}>
-              Export Excel
-            </button>
-          </div>
-
-          <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center', padding: '12px 16px', background: 'var(--surface)', borderRadius: 8, border: '1px solid var(--border)' }}>
-            <select value={leaveFilter.status}
-              onChange={e => setLeaveFilter({ ...leaveFilter, status: e.target.value })}
-              style={{ padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.85rem' }}>
-              <option value="">All Statuses</option>
-              <option value="pending">Pending</option>
-              <option value="approved">Approved</option>
-              <option value="denied">Denied</option>
-            </select>
-            <input type="text" value={leaveFilter.employeeId}
-              onChange={e => setLeaveFilter({ ...leaveFilter, employeeId: e.target.value })}
-              placeholder="Employee ID..."
-              style={{ padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.85rem', width: 140 }} />
-            <input type="date" value={leaveFilter.fromDate}
-              onChange={e => setLeaveFilter({ ...leaveFilter, fromDate: e.target.value })}
-              title="Leave from date"
-              style={{ padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.85rem' }} />
-            <input type="date" value={leaveFilter.toDate}
-              onChange={e => setLeaveFilter({ ...leaveFilter, toDate: e.target.value })}
-              title="Leave to date"
-              style={{ padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: '0.85rem' }} />
-            <button className="btn btn-sm btn-blue" onClick={() => fetchAllLeaves(leaveFilter)}>Apply</button>
-            {(leaveFilter.status || leaveFilter.employeeId || leaveFilter.fromDate || leaveFilter.toDate) && (
-              <button className="btn btn-sm" style={{ background: 'var(--text-secondary)', color: '#fff', padding: '4px 10px' }}
-                onClick={() => { const f = { status: '', employeeId: '', fromDate: '', toDate: '' }; setLeaveFilter(f); fetchAllLeaves(f); }}>
-                Clear
-              </button>
-            )}
-          </div>
-
-          <div className="card" style={{ padding: 0 }}>
-            {leavesLoading ? (
-              <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>Loading...</div>
-            ) : allLeaves.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>No leave applications found.</div>
-            ) : (
-              <div className="table-container">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Employee</th>
-                      <th>Reporting HOD</th>
-                      <th>From</th>
-                      <th>To</th>
-                      <th>Days</th>
-                      <th>Reason</th>
-                      <th>Status</th>
-                      <th>Applied</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {allLeaves.map(l => {
-                      const days = Math.ceil((new Date(l.toDate) - new Date(l.fromDate)) / (1000 * 60 * 60 * 24)) + 1;
-                      const dateStr = (d) => new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-                      return (
-                        <tr key={l._id}>
-                          <td>
-                            <div><strong>{l.employeeName}</strong></div>
-                            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{l.employeeId}</div>
-                            <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{l.employeeEmail}</div>
-                          </td>
-                          <td>{l.reportingHod}</td>
-                          <td style={{ whiteSpace: 'nowrap' }}>{dateStr(l.fromDate)}</td>
-                          <td style={{ whiteSpace: 'nowrap' }}>{dateStr(l.toDate)}</td>
-                          <td style={{ textAlign: 'center' }}>{days}</td>
-                          <td style={{ maxWidth: 200 }}>
-                            <div style={{ fontSize: '0.85rem' }}>{l.reason}</div>
-                          </td>
-                          <td>
-                            <span className="badge" style={{
-                              background: l.status === 'approved' ? 'var(--success)' : l.status === 'denied' ? 'var(--error)' : 'var(--warning)',
-                              color: '#fff'
-                            }}>{l.status}</span>
-                            {l.status === 'denied' && l.denialReason && (
-                              <div style={{ fontSize: '0.75rem', color: 'var(--error)', marginTop: 3 }}>{l.denialReason}</div>
-                            )}
-                            {(l.adminNotes) && (
-                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 2 }}>Note: {l.adminNotes}</div>
-                            )}
-                            {l.resolvedBy && (
-                              <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: 2 }}>by {l.resolvedBy}</div>
-                            )}
-                          </td>
-                          <td style={{ whiteSpace: 'nowrap' }}>{dateStr(l.appliedAt)}</td>
-                          <td>
-                            {l.status === 'pending' && (
-                              <div className="btn-group">
-                                <button className="btn btn-sm btn-green"
-                                  onClick={() => { setLeaveActionModal({ leave: l, type: 'approve' }); setLeaveActionNotes(''); }}>
-                                  Approve
-                                </button>
-                                <button className="btn btn-sm btn-red"
-                                  onClick={() => { setLeaveActionModal({ leave: l, type: 'deny' }); setLeaveActionNotes(''); setLeaveDenialReason(''); }}>
-                                  Deny
-                                </button>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ========== LEAVE ACTION MODALS ========== */}
-      {leaveActionModal && leaveActionModal.type === 'approve' && (
-        <div className="modal-overlay" onClick={() => setLeaveActionModal(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
-            <div className="modal-header">
-              <h2>Approve Leave</h2>
-              <button className="btn-icon" onClick={() => setLeaveActionModal(null)}>&#10005;</button>
-            </div>
-            <div className="modal-body">
-              <p style={{ marginBottom: 8 }}>
-                <strong>{leaveActionModal.leave.employeeName}</strong> ({leaveActionModal.leave.employeeId})
-              </p>
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 16 }}>
-                {new Date(leaveActionModal.leave.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-                {' – '}
-                {new Date(leaveActionModal.leave.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-              </p>
-              <div style={{ padding: '10px 14px', background: 'var(--bg)', borderRadius: 6, marginBottom: 16, fontSize: '0.88rem', border: '1px solid var(--border)' }}>
-                <strong>Reason:</strong> {leaveActionModal.leave.reason}
-              </div>
-              <div className="form-group">
-                <label>Admin Notes (optional)</label>
-                <textarea value={leaveActionNotes} onChange={e => setLeaveActionNotes(e.target.value)}
-                  placeholder="Optional notes..."
-                  rows={3}
-                  style={{ width: '100%', padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 6, fontFamily: 'inherit', fontSize: '0.9rem', resize: 'vertical' }} />
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-outline" onClick={() => setLeaveActionModal(null)}>Cancel</button>
-              <button className="btn btn-green" onClick={approveLeave}>Confirm Approve</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {leaveActionModal && leaveActionModal.type === 'deny' && (
-        <div className="modal-overlay" onClick={() => setLeaveActionModal(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
-            <div className="modal-header">
-              <h2>Deny Leave</h2>
-              <button className="btn-icon" onClick={() => setLeaveActionModal(null)}>&#10005;</button>
-            </div>
-            <div className="modal-body">
-              <p style={{ marginBottom: 8 }}>
-                <strong>{leaveActionModal.leave.employeeName}</strong> ({leaveActionModal.leave.employeeId})
-              </p>
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 16 }}>
-                {new Date(leaveActionModal.leave.fromDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-                {' – '}
-                {new Date(leaveActionModal.leave.toDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-              </p>
-              <div style={{ padding: '10px 14px', background: 'var(--bg)', borderRadius: 6, marginBottom: 16, fontSize: '0.88rem', border: '1px solid var(--border)' }}>
-                <strong>Reason:</strong> {leaveActionModal.leave.reason}
-              </div>
-              <div className="form-group">
-                <label>Denial Reason <span style={{ color: 'var(--error)' }}>*</span></label>
-                <input value={leaveDenialReason} onChange={e => setLeaveDenialReason(e.target.value)}
-                  placeholder="Reason for denial" autoFocus />
-              </div>
-              <div className="form-group">
-                <label>Admin Notes (optional)</label>
-                <textarea value={leaveActionNotes} onChange={e => setLeaveActionNotes(e.target.value)}
-                  placeholder="Optional additional notes..."
-                  rows={3}
-                  style={{ width: '100%', padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 6, fontFamily: 'inherit', fontSize: '0.9rem', resize: 'vertical' }} />
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-outline" onClick={() => setLeaveActionModal(null)}>Cancel</button>
-              <button className="btn btn-red" onClick={denyLeave}>Confirm Deny</button>
             </div>
           </div>
         </div>

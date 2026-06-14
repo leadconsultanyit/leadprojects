@@ -67,7 +67,6 @@ export default function Navbar() {
 
   const roleColor = user?.role === 'admin' ? '#E11D48'
     : user?.role === 'business' ? '#7C3AED'
-    : user?.role === 'observer' ? '#0891B2'
     : '#059669';
 
   return (

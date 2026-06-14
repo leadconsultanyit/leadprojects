@@ -6,7 +6,6 @@ import Register from './pages/Register';
 import AdminDashboard from './pages/AdminDashboard';
 import EmployeeDashboard from './pages/EmployeeDashboard';
 import BusinessDashboard from './pages/BusinessDashboard';
-import ObserverDashboard from './pages/ObserverDashboard';
 import ProposalDocumentDashboard from './pages/ProposalDocumentDashboard';
 
 function ProtectedRoute({ children, roles }) {
@@ -27,7 +26,6 @@ export default function App() {
     if (user.role === 'admin') return '/admin';
     if (user.role === 'employee') return '/employee';
     if (user.role === 'business') return '/business';
-    if (user.role === 'observer') return '/observer';
     return '/login';
   };
 
@@ -46,9 +44,6 @@ export default function App() {
           } />
           <Route path="/business" element={
             <ProtectedRoute roles={['business']}><BusinessDashboard /></ProtectedRoute>
-          } />
-          <Route path="/observer" element={
-            <ProtectedRoute roles={['observer']}><ObserverDashboard /></ProtectedRoute>
           } />
           <Route path="/proposal-documents" element={
             <ProtectedRoute roles={['admin', 'business']}><ProposalDocumentDashboard /></ProtectedRoute>

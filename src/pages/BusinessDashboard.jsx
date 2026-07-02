@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import ProjectForm from '../components/ProjectForm';
-import RevenueDashboard from '../components/RevenueDashboard';
 import { fuzzyFilterSort } from '../utils/fuzzy';
 import * as XLSX from 'xlsx';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
@@ -512,10 +511,7 @@ export default function BusinessDashboard() {
           Workorders ({workorders.length})
         </button>
         <button className={`tab ${tab === 'deltas' ? 'active' : ''}`} onClick={() => setTab('deltas')}>Budget Deltas</button>
-        <button className={`tab ${tab === 'revenue' ? 'active' : ''}`} onClick={() => setTab('revenue')}>Revenue Dashboard</button>
       </div>
-
-      {tab === 'revenue' && <RevenueDashboard />}
 
       {tab === 'pipeline' && (
         <div>

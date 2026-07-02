@@ -4,6 +4,17 @@ import { useAuth } from '../context/AuthContext';
 
 const VERTICALS = ['ESG', 'Green Building Certification', 'MEFP Design'];
 
+const fmtFollowUpDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+const daysUntilDate = (d) => d == null ? null : Math.ceil((new Date(d) - new Date()) / 86400000);
+const followUpAlert = (fu) => {
+  if (!fu || fu.status === 'completed') return null;
+  const days = daysUntilDate(fu.dueDate);
+  if (days === null) return null;
+  if (days < 0) return 'overdue';
+  if (days <= 3) return 'due-soon';
+  return null;
+};
+
 export default function EmployeeDashboard() {
   const { user, refreshUser } = useAuth();
   const [projects, setProjects] = useState([]);
@@ -14,6 +25,7 @@ export default function EmployeeDashboard() {
   const [cvUploading, setCvUploading] = useState(false);
   const [cvMessage, setCvMessage] = useState('');
   const [profile, setProfile] = useState(null);
+  const [followUps, setFollowUps] = useState([]);
 
   const [editing, setEditing] = useState(false);
   const [profileForm, setProfileForm] = useState(null);
@@ -34,6 +46,19 @@ export default function EmployeeDashboard() {
       const meRes = await axios.get('/api/auth/me');
       setProfile(meRes.data);
     } catch {}
+    try {
+      const fuRes = await axios.get('/api/projects/follow-ups/mine');
+      setFollowUps(fuRes.data);
+    } catch {}
+  };
+
+  const markFollowUp = async (fu, status) => {
+    try {
+      await axios.put(`/api/projects/${fu.projectId}/follow-ups/${fu.followUpId}`, { status });
+      fetchData();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to update follow-up');
+    }
   };
 
   useEffect(() => {
@@ -153,6 +178,8 @@ export default function EmployeeDashboard() {
     (p.pipelineStatus === 'workorder' || p.pipelineStatus === 'workorder-held') &&
     (p.assignedEmployeeIds || []).includes(user?.employeeId)
   );
+  const pendingFollowUps = followUps.filter(fu => fu.status === 'pending').length;
+  const overdueFollowUps = followUps.filter(fu => followUpAlert(fu) === 'overdue').length;
   const pf = profileForm || buildFormFromProfile(profile || {});
 
   return (
@@ -200,10 +227,69 @@ export default function EmployeeDashboard() {
         <button className={`tab ${tab === 'milestones' ? 'active' : ''}`} onClick={() => setTab('milestones')}>
           Milestones ({myProjects.length})
         </button>
+        <button className={`tab ${tab === 'followups' ? 'active' : ''}`} onClick={() => setTab('followups')}>
+          Follow-ups{pendingFollowUps > 0 ? ` (${pendingFollowUps})` : ''}
+          {overdueFollowUps > 0 && (
+            <span style={{ marginLeft: 6, background: 'var(--error)', color: '#fff', borderRadius: 99, padding: '0 7px', fontSize: '0.7rem', fontWeight: 700 }}>
+              {overdueFollowUps}
+            </span>
+          )}
+        </button>
         <button className={`tab ${tab === 'profile' ? 'active' : ''}`} onClick={() => setTab('profile')}>
           My Profile
         </button>
       </div>
+
+      {tab === 'followups' && (
+        <div>
+          {followUps.length === 0 ? (
+            <div className="card" style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>
+              No follow-ups assigned to you yet.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {followUps.map(fu => {
+                const alertLevel = followUpAlert(fu);
+                const done = fu.status === 'completed';
+                const bd = alertLevel === 'overdue' ? '#FCA5A5' : alertLevel === 'due-soon' ? '#FDE68A' : 'var(--border)';
+                const days = daysUntilDate(fu.dueDate);
+                return (
+                  <div className="card" key={`${fu.projectId}-${fu.followUpId}`} style={{ borderLeft: `4px solid ${alertLevel === 'overdue' ? 'var(--error)' : alertLevel === 'due-soon' ? 'var(--warning)' : 'var(--border)'}`, border: `1px solid ${bd}`, opacity: done ? 0.7 : 1 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 700, fontSize: '0.95rem', textDecoration: done ? 'line-through' : 'none' }}>
+                          {fu.title}
+                        </div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: 2 }}>
+                          {fu.projectName} · {fu.projectId} · {fu.clientName}
+                        </div>
+                        {fu.notes && <div style={{ fontSize: '0.85rem', marginTop: 6 }}>{fu.notes}</div>}
+                        <div style={{ display: 'flex', gap: 12, marginTop: 8, flexWrap: 'wrap', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                          {fu.dueDate && (
+                            <span style={{ color: alertLevel === 'overdue' ? 'var(--error)' : alertLevel === 'due-soon' ? 'var(--warning)' : 'var(--text-secondary)', fontWeight: alertLevel ? 700 : 400 }}>
+                              Due {fmtFollowUpDate(fu.dueDate)}
+                              {!done && alertLevel === 'overdue' && ` — ${Math.abs(days)}d overdue`}
+                              {!done && alertLevel === 'due-soon' && ` — ${days === 0 ? 'due today' : days + 'd left'}`}
+                            </span>
+                          )}
+                          {fu.createdByName && <span>Assigned by {fu.createdByName}</span>}
+                          {done && <span>· Completed</span>}
+                        </div>
+                      </div>
+                      <button
+                        className={`btn btn-sm ${done ? 'btn-outline' : 'btn-green'}`}
+                        onClick={() => markFollowUp(fu, done ? 'pending' : 'completed')}
+                      >
+                        {done ? 'Reopen' : 'Mark Done'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {tab === 'milestones' && myProjects.length > 0 && (
         <div>

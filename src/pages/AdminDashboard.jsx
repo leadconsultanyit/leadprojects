@@ -13,6 +13,18 @@ import * as XLSX from 'xlsx';
 const DEFAULT_LOSS_REASONS = ['Dropped', 'To other consultants', 'Low Cost', 'Arch dependent', 'Non-responsive', 'Budget constraint', 'ESG', 'Other'];
 const CHART_COLORS = ['#059669', '#7C3AED', '#0891B2', '#D97706', '#E11D48', '#047857', '#6D28D9', '#14B8A6'];
 
+const fmtFollowUpDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+const daysUntilDate = (d) => d == null ? null : Math.ceil((new Date(d) - new Date()) / 86400000);
+// Alert level for a pending follow-up: 'overdue', 'due-soon' (<=3 days), or null.
+const followUpAlert = (fu) => {
+  if (!fu || fu.status === 'completed') return null;
+  const days = daysUntilDate(fu.dueDate);
+  if (days === null) return null;
+  if (days < 0) return 'overdue';
+  if (days <= 3) return 'due-soon';
+  return null;
+};
+
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const [tab, setTab] = useState('employees');
@@ -53,6 +65,12 @@ export default function AdminDashboard() {
   // Invoice emails
   const [invoiceEmailsModal, setInvoiceEmailsModal] = useState(null);
   const [invoiceEmailsInput, setInvoiceEmailsInput] = useState('');
+
+  // Technical support assignment + follow-ups
+  const [technicalModal, setTechnicalModal] = useState(null);
+  const [technicalSelected, setTechnicalSelected] = useState([]);
+  const [followUpModal, setFollowUpModal] = useState(null);
+  const [followUpForm, setFollowUpForm] = useState({ title: '', notes: '', dueDate: '', assignedTo: [] });
 
   // Universal pipeline filtering
   const [pipelineFilter, setPipelineFilter] = useState({ month: '', vertical: '', contactPoint: '', leadOffice: '', search: '', lossReason: '', certificationType: '' });
@@ -124,6 +142,55 @@ export default function AdminDashboard() {
   const deleteProject = async (projectId) => {
     if (!confirm('Delete this project?')) return;
     await axios.delete(`/api/projects/${projectId}`); fetchProjects();
+  };
+
+  // ---- Technical support assignment ----
+  const empName = (id) => employees.find(e => e.employeeId === id)?.name || id;
+
+  const openTechnicalModal = (p) => {
+    setTechnicalModal(p);
+    setTechnicalSelected(p.technicalAssignees || []);
+    setActionError('');
+  };
+  const toggleTechnical = (id) => {
+    setTechnicalSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+  const saveTechnicalAssignees = async () => {
+    try {
+      await axios.put(`/api/projects/${technicalModal.projectId}/technical-assignees`, { technicalAssignees: technicalSelected });
+      setTechnicalModal(null); fetchProjects();
+    } catch (err) { setActionError(err.response?.data?.message || 'Failed to save'); }
+  };
+
+  // ---- Follow-ups ----
+  const openFollowUpModal = (p) => {
+    setFollowUpModal(p);
+    setFollowUpForm({ title: '', notes: '', dueDate: '', assignedTo: p.technicalAssignees || [] });
+    setActionError('');
+  };
+  const toggleFollowUpAssignee = (id) => {
+    setFollowUpForm(f => ({
+      ...f,
+      assignedTo: f.assignedTo.includes(id) ? f.assignedTo.filter(x => x !== id) : [...f.assignedTo, id]
+    }));
+  };
+  const addFollowUp = async () => {
+    if (!followUpForm.title.trim()) { setActionError('Enter a follow-up title'); return; }
+    try {
+      await axios.post(`/api/projects/${followUpModal.projectId}/follow-ups`, followUpForm);
+      setFollowUpModal(null); fetchProjects();
+    } catch (err) { setActionError(err.response?.data?.message || 'Failed to add follow-up'); }
+  };
+  const toggleFollowUpStatus = async (p, fu) => {
+    await axios.put(`/api/projects/${p.projectId}/follow-ups/${fu.followUpId}`, {
+      status: fu.status === 'completed' ? 'pending' : 'completed'
+    });
+    fetchProjects();
+  };
+  const deleteFollowUp = async (p, fu) => {
+    if (!confirm('Delete this follow-up?')) return;
+    await axios.delete(`/api/projects/${p.projectId}/follow-ups/${fu.followUpId}`);
+    fetchProjects();
   };
 
   // Universal stage transition — works from any current stage.
@@ -846,6 +913,80 @@ export default function AdminDashboard() {
     </div>
   );
 
+  // Technical-support team + CRM-style follow-ups panel (used on every stage card)
+  const renderTechFollowUps = (p) => {
+    const tech = p.technicalAssignees || [];
+    const fus = p.followUps || [];
+    const pendingCount = fus.filter(f => f.status === 'pending').length;
+    const overdueCount = fus.filter(f => followUpAlert(f) === 'overdue').length;
+    return (
+      <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed var(--border)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+            Technical Team{tech.length > 0 ? ` (${tech.length})` : ''}
+          </span>
+          <button className="btn btn-sm btn-outline" style={{ padding: '2px 8px', fontSize: '0.72rem' }}
+            onClick={() => openTechnicalModal(p)}>Assign</button>
+        </div>
+        {tech.length > 0 ? (
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
+            {tech.map(id => <span key={id} className="meta-tag">{empName(id)}</span>)}
+          </div>
+        ) : (
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: 8 }}>No technical members assigned</div>
+        )}
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+            Follow-ups
+            {pendingCount > 0 && <span> · {pendingCount} pending</span>}
+            {overdueCount > 0 && <span style={{ color: 'var(--error)' }}> · {overdueCount} overdue</span>}
+          </span>
+          <button className="btn btn-sm btn-outline" style={{ padding: '2px 8px', fontSize: '0.72rem' }}
+            onClick={() => openFollowUpModal(p)}>+ Follow-up</button>
+        </div>
+        {fus.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {fus.map(fu => {
+              const alertLevel = followUpAlert(fu);
+              const done = fu.status === 'completed';
+              const bg = done ? 'var(--bg)' : alertLevel === 'overdue' ? '#FEE2E2' : alertLevel === 'due-soon' ? '#FEF3C7' : 'var(--bg)';
+              const bd = alertLevel === 'overdue' ? '#FCA5A5' : alertLevel === 'due-soon' ? '#FDE68A' : 'var(--border)';
+              const days = daysUntilDate(fu.dueDate);
+              return (
+                <div key={fu.followUpId} style={{ padding: '6px 8px', background: bg, border: `1px solid ${bd}`, borderRadius: 6, fontSize: '0.76rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontWeight: 600, textDecoration: done ? 'line-through' : 'none', color: done ? 'var(--text-secondary)' : 'var(--text)' }}>
+                      {fu.title}
+                    </span>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button className="btn-icon" title={done ? 'Reopen' : 'Mark done'}
+                        onClick={() => toggleFollowUpStatus(p, fu)} style={{ fontSize: '0.85rem' }}>{done ? '↺' : '✓'}</button>
+                      <button className="btn-icon" title="Delete" onClick={() => deleteFollowUp(p, fu)}
+                        style={{ fontSize: '0.8rem', color: 'var(--error)' }}>&#10005;</button>
+                    </div>
+                  </div>
+                  {fu.notes && <div style={{ color: 'var(--text-secondary)', marginTop: 2 }}>{fu.notes}</div>}
+                  <div style={{ display: 'flex', gap: 8, marginTop: 3, flexWrap: 'wrap', color: 'var(--text-secondary)' }}>
+                    {fu.dueDate && (
+                      <span style={{ color: alertLevel === 'overdue' ? 'var(--error)' : alertLevel === 'due-soon' ? 'var(--warning)' : 'var(--text-secondary)', fontWeight: alertLevel ? 600 : 400 }}>
+                        Due {fmtFollowUpDate(fu.dueDate)}
+                        {!done && alertLevel === 'overdue' && ` (${Math.abs(days)}d overdue)`}
+                        {!done && alertLevel === 'due-soon' && ` (${days === 0 ? 'today' : days + 'd left'})`}
+                      </span>
+                    )}
+                    {(fu.assignedTo || []).length > 0 && <span>· {fu.assignedTo.map(empName).join(', ')}</span>}
+                    {done && <span>· Completed</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderProjectCard = (p, actions, revData) => (
     <div className="card pipeline-card" key={p.projectId}>
       <div className="card-header">
@@ -880,6 +1021,7 @@ export default function AdminDashboard() {
       )}
       {renderContactPoint(p.contactPoint)}
       {renderMetaTags(p)}
+      {renderTechFollowUps(p)}
       <div className="btn-group" style={{ marginTop: 12 }}>
         {actions}
         {renderStageMover(p)}
@@ -1447,6 +1589,7 @@ export default function AdminDashboard() {
                       Invoice to: {p.invoiceRecipientEmails.join(', ')}
                     </div>
                   )}
+                  {renderTechFollowUps(p)}
                   <div className="btn-group" style={{ marginTop: 12 }}>
                     {!isHeld && (
                       <button className="btn btn-sm" style={{ background: 'var(--warning)', color: '#fff' }}
@@ -2386,6 +2529,95 @@ export default function AdminDashboard() {
                 disabled={selectedEmployees.length < 1}>
                 Assign & Move to Workorder ({selectedEmployees.length} selected)
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ASSIGN TECHNICAL TEAM MODAL */}
+      {technicalModal && (
+        <div className="modal-overlay" onClick={() => setTechnicalModal(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
+            <div className="modal-header">
+              <h2>Assign Technical Team</h2>
+              <button className="btn-icon" onClick={() => setTechnicalModal(null)} style={{ fontSize: '1.2rem' }}>&#10005;</button>
+            </div>
+            <div className="modal-body" style={{ maxHeight: '70vh' }}>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
+                {technicalModal.projectName} — select internal members for technical support.
+              </p>
+              {actionError && <div className="auth-error" style={{ marginBottom: 12 }}>{actionError}</div>}
+              {employees.length === 0 ? (
+                <div style={{ color: 'var(--text-secondary)' }}>No employees available.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {employees.map(e => (
+                    <label key={e.employeeId} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer', background: technicalSelected.includes(e.employeeId) ? 'var(--bg)' : 'transparent' }}>
+                      <input type="checkbox" checked={technicalSelected.includes(e.employeeId)} onChange={() => toggleTechnical(e.employeeId)} />
+                      <span style={{ fontWeight: 600 }}>{e.name}</span>
+                      <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{e.employeeId}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-outline" onClick={() => setTechnicalModal(null)}>Cancel</button>
+              <button className="btn btn-blue" onClick={saveTechnicalAssignees}>
+                Save ({technicalSelected.length} selected)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ADD FOLLOW-UP MODAL */}
+      {followUpModal && (
+        <div className="modal-overlay" onClick={() => setFollowUpModal(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
+            <div className="modal-header">
+              <h2>Add Follow-up</h2>
+              <button className="btn-icon" onClick={() => setFollowUpModal(null)} style={{ fontSize: '1.2rem' }}>&#10005;</button>
+            </div>
+            <div className="modal-body" style={{ maxHeight: '70vh' }}>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 12 }}>
+                {followUpModal.projectName}
+              </p>
+              {actionError && <div className="auth-error" style={{ marginBottom: 12 }}>{actionError}</div>}
+              <div className="form-group" style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: '0.8rem' }}>Title *</label>
+                <input value={followUpForm.title} onChange={e => setFollowUpForm({ ...followUpForm, title: e.target.value })}
+                  placeholder="e.g., Call client for revised scope" />
+              </div>
+              <div className="form-group" style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: '0.8rem' }}>Notes</label>
+                <textarea value={followUpForm.notes} onChange={e => setFollowUpForm({ ...followUpForm, notes: e.target.value })}
+                  placeholder="Optional details" rows={2} />
+              </div>
+              <div className="form-group" style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: '0.8rem' }}>Due Date</label>
+                <input type="date" value={followUpForm.dueDate} onChange={e => setFollowUpForm({ ...followUpForm, dueDate: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label style={{ fontSize: '0.8rem' }}>Assign to technical members</label>
+                {employees.length === 0 ? (
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>No employees available.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+                    {employees.map(e => (
+                      <label key={e.employeeId} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer', background: followUpForm.assignedTo.includes(e.employeeId) ? 'var(--bg)' : 'transparent' }}>
+                        <input type="checkbox" checked={followUpForm.assignedTo.includes(e.employeeId)} onChange={() => toggleFollowUpAssignee(e.employeeId)} />
+                        <span style={{ fontWeight: 600 }}>{e.name}</span>
+                        <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{e.employeeId}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-outline" onClick={() => setFollowUpModal(null)}>Cancel</button>
+              <button className="btn btn-blue" onClick={addFollowUp}>Add Follow-up</button>
             </div>
           </div>
         </div>

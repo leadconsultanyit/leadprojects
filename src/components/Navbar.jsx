@@ -3,6 +3,17 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import axios from 'axios';
 
+const daysUntilDate = (d) => d == null ? null : Math.ceil((new Date(d) - new Date()) / 86400000);
+const followUpAlert = (fu) => {
+  if (!fu || fu.status === 'completed') return null;
+  const days = daysUntilDate(fu.dueDate);
+  if (days === null) return null;
+  if (days < 0) return 'overdue';
+  if (days <= 3) return 'due-soon';
+  return null;
+};
+const fmtFollowUpDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '';
+
 export default function Navbar() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -12,8 +23,30 @@ export default function Navbar() {
   const [showNotif, setShowNotif] = useState(false);
   const dropdownRef = useRef(null);
 
+  const [followUps, setFollowUps] = useState([]);
+  const [showFollowUps, setShowFollowUps] = useState(false);
+  const followUpRef = useRef(null);
+
   const isBusiness = user?.role === 'business';
+  const isAdmin = user?.role === 'admin';
+  const isEmployee = user?.role === 'employee';
   const canSeeProposals = user?.role === 'admin' || user?.role === 'business';
+
+  // Follow-up alerts for admin (all) and employees (assigned to them)
+  useEffect(() => {
+    if (!isAdmin && !isEmployee) return;
+    const fetchFollowUps = () => {
+      axios.get('/api/projects/follow-ups/mine')
+        .then(res => setFollowUps(res.data))
+        .catch(() => {});
+    };
+    fetchFollowUps();
+    const interval = setInterval(fetchFollowUps, 30000);
+    return () => clearInterval(interval);
+  }, [isAdmin, isEmployee]);
+
+  const alertFollowUps = followUps.filter(fu => fu.status === 'pending' && followUpAlert(fu));
+  const pendingFollowUps = followUps.filter(fu => fu.status === 'pending');
 
   useEffect(() => {
     if (!isBusiness) return;
@@ -33,6 +66,9 @@ export default function Navbar() {
     function handleClick(e) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
         setShowNotif(false);
+      }
+      if (followUpRef.current && !followUpRef.current.contains(e.target)) {
+        setShowFollowUps(false);
       }
     }
     document.addEventListener('mousedown', handleClick);
@@ -136,6 +172,54 @@ export default function Navbar() {
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <span className="notif-amount">{n.amount?.toLocaleString('en-IN')}</span>
                           <span className="notif-time">{formatTime(n.createdAt)}</span>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        {(isAdmin || isEmployee) && (
+          <div className="notification-bell" ref={followUpRef}>
+            <div onClick={() => setShowFollowUps(!showFollowUps)} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }} title="Follow-ups">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 11l3 3L22 4"/>
+                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+              </svg>
+              {alertFollowUps.length > 0 && (
+                <span className="notification-badge">{alertFollowUps.length > 9 ? '9+' : alertFollowUps.length}</span>
+              )}
+            </div>
+            {showFollowUps && (
+              <div className="notification-dropdown">
+                <div className="notification-header">
+                  <span>Follow-ups {pendingFollowUps.length > 0 ? `(${pendingFollowUps.length} pending)` : ''}</span>
+                </div>
+                {pendingFollowUps.length === 0 ? (
+                  <div className="notification-empty">No pending follow-ups</div>
+                ) : (
+                  pendingFollowUps.map(fu => {
+                    const level = followUpAlert(fu);
+                    const days = daysUntilDate(fu.dueDate);
+                    const color = level === 'overdue' ? 'var(--error)' : level === 'due-soon' ? 'var(--warning)' : 'var(--text-secondary)';
+                    return (
+                      <div
+                        key={`${fu.projectId}-${fu.followUpId}`}
+                        className={`notification-item ${level ? 'unread' : ''}`}
+                        onClick={() => { setShowFollowUps(false); navigate(isAdmin ? '/admin' : '/employee'); }}
+                      >
+                        <div className="notif-msg">{fu.title}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 2 }}>
+                          {fu.projectName}
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
+                          <span style={{ fontSize: '0.75rem', color, fontWeight: level ? 700 : 400 }}>
+                            {fu.dueDate
+                              ? `Due ${fmtFollowUpDate(fu.dueDate)}${level === 'overdue' ? ` (${Math.abs(days)}d overdue)` : level === 'due-soon' ? (days === 0 ? ' (today)' : ` (${days}d)`) : ''}`
+                              : 'No due date'}
+                          </span>
                         </div>
                       </div>
                     );

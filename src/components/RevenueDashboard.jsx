@@ -221,7 +221,7 @@ export default function RevenueDashboard() {
         <KpiCard label="Potential Revenue" value={totals.totalPotentialRevenue} icon={ICONS.potential} delay={0}
           gradient="linear-gradient(135deg, #059669, #10B981)" glow="rgba(5,150,105,0.55)"
           sub={`Across ${totals.runningCount || 0} running projects`} />
-        <KpiCard label="Received" value={totals.totalReceived} icon={ICONS.received} delay={90}
+        <KpiCard label="Raised" value={totals.totalReceived} icon={ICONS.received} delay={90}
           gradient="linear-gradient(135deg, #0891B2, #22D3EE)" glow="rgba(8,145,178,0.55)"
           sub={`${collectionPct}% of potential collected`} />
         <KpiCard label="Pending" value={totals.totalPending} icon={ICONS.pending} delay={180}
@@ -251,7 +251,7 @@ export default function RevenueDashboard() {
             </ResponsiveContainer>
             <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
               <div style={{ fontFamily: 'var(--font-display)', fontSize: '2.6rem', fontWeight: 800, color: 'var(--accent)', lineHeight: 1 }}>{collectionPct}%</div>
-              <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', marginTop: 2 }}>collected</div>
+              <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginTop: 2, width: "3rem" }}>collected out of potential revenue</div>
             </div>
           </div>
           <div style={{ width: '100%', marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>

@@ -515,30 +515,27 @@ export default function BusinessDashboard() {
 
       {tab === 'pipeline' && (
         <div>
-          <div className="pipeline-tabs">
-            {[
-              { key: 'all', label: 'All', count: allProjects.length, color: '#6366F1' },
-              { key: 'proposals', label: 'Proposals', count: proposals.length, color: 'var(--info)' },
-              { key: 'won', label: 'Won', count: wonProjects.length, color: 'var(--success)' },
-              { key: 'hold', label: 'Hold', count: holdProjects.length, color: 'var(--warning)' },
-              { key: 'lost', label: 'Lost', count: lostProjects.length, color: 'var(--error)' }
-            ].map(t => (
-              <button key={t.key}
-                className={`pipeline-tab ${pipelineTab === t.key ? 'active' : ''}`}
-                style={{ '--tab-color': t.color }}
-                onClick={() => setPipelineTab(t.key)}>
-                {t.label} <span className="pipeline-tab-count">{t.count}</span>
-              </button>
-            ))}
-          </div>
-
-          {pipelineTab === 'proposals' && (
-            <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
-              <button className="btn btn-blue" onClick={() => { setEditingProject(null); setShowProjectModal(true); }}>
-                + New Proposal
-              </button>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <div className="pipeline-tabs" style={{ marginBottom: 0 }}>
+              {[
+                { key: 'all', label: 'All', count: allProjects.length, color: '#6366F1' },
+                { key: 'proposals', label: 'Proposals', count: proposals.length, color: 'var(--info)' },
+                { key: 'won', label: 'Won', count: wonProjects.length, color: 'var(--success)' },
+                { key: 'hold', label: 'Hold', count: holdProjects.length, color: 'var(--warning)' },
+                { key: 'lost', label: 'Lost', count: lostProjects.length, color: 'var(--error)' }
+              ].map(t => (
+                <button key={t.key}
+                  className={`pipeline-tab ${pipelineTab === t.key ? 'active' : ''}`}
+                  style={{ '--tab-color': t.color }}
+                  onClick={() => setPipelineTab(t.key)}>
+                  {t.label} <span className="pipeline-tab-count">{t.count}</span>
+                </button>
+              ))}
             </div>
-          )}
+            <button className="btn btn-blue" onClick={() => { setEditingProject(null); setShowProjectModal(true); }}>
+              + New Proposal
+            </button>
+          </div>
 
           <div className="grid-2">
             {renderFilterBar()}

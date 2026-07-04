@@ -145,11 +145,7 @@ export default function ProjectForm({ project, onSave, onCancel }) {
     const cleanVersions = {};
     for (const [key, val] of Object.entries(data.ratingSystemVersions || {})) {
       if (key.endsWith('_custom')) continue;
-      if (val === 'other') {
-        cleanVersions[key] = data.ratingSystemVersions[`${key}_custom`] || 'other';
-      } else {
-        cleanVersions[key] = val;
-      }
+      if (val) cleanVersions[key] = val;
     }
     data.ratingSystemVersions = cleanVersions;
 
@@ -191,40 +187,35 @@ export default function ProjectForm({ project, onSave, onCancel }) {
         </div>
         <div className="form-group">
           <label>Client Sector</label>
-          <select value={form.clientSectorOther ? 'Other' : form.clientSector}
-            onChange={e => {
-              if (e.target.value === 'Other') {
-                setForm({ ...form, clientSector: '', clientSectorOther: 'Other' });
-              } else {
-                setForm({ ...form, clientSector: e.target.value, clientSectorOther: '' });
-              }
-            }}>
-            <option value="">Select...</option>
-            {CLIENT_SECTORS.map(s => <option key={s} value={s}>{s}</option>)}
-            <option value="Other">Other</option>
-          </select>
-          {form.clientSectorOther && (
-            <input type="text" value={form.clientSectorOther === 'Other' ? '' : form.clientSectorOther}
-              onChange={e => setForm({ ...form, clientSectorOther: e.target.value })}
-              placeholder="Specify client sector" style={{ marginTop: 8, width: '100%' }} />
-          )}
+          <input list="clientSectorOptions" value={form.clientSector}
+            onChange={e => setForm({ ...form, clientSector: e.target.value })}
+            placeholder="Select or type..." />
+          <datalist id="clientSectorOptions">
+            {CLIENT_SECTORS.map(s => <option key={s} value={s} />)}
+          </datalist>
         </div>
       </div>
 
       <div className="inline-fields">
         <div className="form-group">
           <label>Lead Office</label>
-          <select value={form.leadOffice} onChange={e => setForm({ ...form, leadOffice: e.target.value })}>
-            {LEAD_OFFICES.map(o => <option key={o} value={o}>{o}</option>)}
-          </select>
+          <input list="leadOfficeOptions" value={form.leadOffice}
+            onChange={e => setForm({ ...form, leadOffice: e.target.value })}
+            placeholder="Select or type..." />
+          <datalist id="leadOfficeOptions">
+            {LEAD_OFFICES.map(o => <option key={o} value={o} />)}
+          </datalist>
         </div>
         <div className="form-group">
           <label>Vertical</label>
-          <select value={form.vertical} onChange={e => setForm({ ...form, vertical: e.target.value })}>
-            <option value="ESG">ESG</option>
-            <option value="Green Building Certification">Green Building Certification</option>
-            <option value="MEFP Design">MEFP Design</option>
-          </select>
+          <input list="verticalOptions" value={form.vertical}
+            onChange={e => setForm({ ...form, vertical: e.target.value })}
+            placeholder="Select or type..." />
+          <datalist id="verticalOptions">
+            <option value="ESG" />
+            <option value="Green Building Certification" />
+            <option value="MEFP Design" />
+          </datalist>
         </div>
       </div>
 
@@ -244,23 +235,12 @@ export default function ProjectForm({ project, onSave, onCancel }) {
       <div className="inline-fields">
         <div className="form-group">
           <label>Building Usage</label>
-          <select value={form.buildingUsageOther ? 'Other' : form.buildingUsage}
-            onChange={e => {
-              if (e.target.value === 'Other') {
-                setForm({ ...form, buildingUsage: '', buildingUsageOther: 'Other' });
-              } else {
-                setForm({ ...form, buildingUsage: e.target.value, buildingUsageOther: '' });
-              }
-            }}>
-            <option value="">Select...</option>
-            {BUILDING_USAGES.map(b => <option key={b} value={b}>{b}</option>)}
-            <option value="Other">Other</option>
-          </select>
-          {form.buildingUsageOther && (
-            <input type="text" value={form.buildingUsageOther === 'Other' ? '' : form.buildingUsageOther}
-              onChange={e => setForm({ ...form, buildingUsageOther: e.target.value })}
-              placeholder="Specify building usage" style={{ marginTop: 8, width: '100%' }} />
-          )}
+          <input list="buildingUsageOptions" value={form.buildingUsage}
+            onChange={e => setForm({ ...form, buildingUsage: e.target.value })}
+            placeholder="Select or type..." />
+          <datalist id="buildingUsageOptions">
+            {BUILDING_USAGES.map(b => <option key={b} value={b} />)}
+          </datalist>
         </div>
         <div className="form-group">
           <label>Total Proposed Amount (INR)</label>
@@ -360,26 +340,17 @@ export default function ProjectForm({ project, onSave, onCancel }) {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
             {form.ratingSystem.map(rs => (
               <div key={rs}>
-                <select value={form.ratingSystemVersions[rs] || ''}
+                <input list={`rsVersionOptions_${rs}`} placeholder={`${rs} - select or type version`}
+                  value={form.ratingSystemVersions[rs] || ''}
                   onChange={e => setForm({
                     ...form,
                     ratingSystemVersions: { ...form.ratingSystemVersions, [rs]: e.target.value }
-                  })}>
-                  <option value="">{rs} - Select version</option>
+                  })} />
+                <datalist id={`rsVersionOptions_${rs}`}>
                   {(RATING_SYSTEM_VERSIONS[rs] || []).map(v => (
-                    <option key={v} value={v}>{v}</option>
+                    <option key={v} value={v} />
                   ))}
-                  <option value="other">Other</option>
-                </select>
-                {form.ratingSystemVersions[rs] === 'other' && (
-                  <input type="text" placeholder={`Custom ${rs} version`}
-                    value={form.ratingSystemVersions[`${rs}_custom`] || ''}
-                    onChange={e => setForm({
-                      ...form,
-                      ratingSystemVersions: { ...form.ratingSystemVersions, [`${rs}_custom`]: e.target.value }
-                    })}
-                    style={{ marginTop: 6, width: '100%' }} />
-                )}
+                </datalist>
               </div>
             ))}
           </div>

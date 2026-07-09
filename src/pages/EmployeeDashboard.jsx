@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
+import InvoiceFollowUps, { RaiseInvoiceModal, CollectInvoiceModal } from '../components/InvoiceFollowUps';
+import { invoiceFollowUpStatus } from '../utils/invoiceFollowUp';
 
 const VERTICALS = ['ESG', 'Green Building Certification', 'MEFP Design'];
 
@@ -26,6 +28,7 @@ export default function EmployeeDashboard() {
   const [cvMessage, setCvMessage] = useState('');
   const [profile, setProfile] = useState(null);
   const [followUps, setFollowUps] = useState([]);
+  const [invoiceItems, setInvoiceItems] = useState([]);
 
   const [editing, setEditing] = useState(false);
   const [profileForm, setProfileForm] = useState(null);
@@ -50,7 +53,18 @@ export default function EmployeeDashboard() {
       const fuRes = await axios.get('/api/projects/follow-ups/mine');
       setFollowUps(fuRes.data);
     } catch {}
+    try {
+      const invRes = await axios.get('/api/projects/invoice-followups/mine');
+      setInvoiceItems(invRes.data);
+    } catch {}
   };
+
+  // Alert counts for the Invoices tab badge.
+  const invoiceCritical = invoiceItems.filter(i => invoiceFollowUpStatus(i).critical).length;
+  const invoiceDue = invoiceItems.filter(i => {
+    const s = invoiceFollowUpStatus(i);
+    return s.alerting && !s.critical;
+  }).length;
 
   const markFollowUp = async (fu, status) => {
     try {
@@ -121,6 +135,20 @@ export default function EmployeeDashboard() {
     } catch (err) {
       alert(err.response?.data?.message || 'Failed to update milestone');
     }
+  };
+
+  // Raise/collect now open a modal to capture invoice/transaction details.
+  // { projectId, milestone } while open, else null.
+  const [raiseModal, setRaiseModal] = useState(null);
+  const [collectModal, setCollectModal] = useState(null);
+  // Bumped after any invoice action to refresh the follow-up panel.
+  const [invoiceRefresh, setInvoiceRefresh] = useState(0);
+
+  const afterInvoiceAction = async () => {
+    setRaiseModal(null);
+    setCollectModal(null);
+    setInvoiceRefresh(k => k + 1);
+    await fetchData();
   };
 
   const handleCvUpload = async (file) => {
@@ -235,10 +263,27 @@ export default function EmployeeDashboard() {
             </span>
           )}
         </button>
+        <button className={`tab ${tab === 'invoices' ? 'active' : ''}`} onClick={() => setTab('invoices')}>
+          Invoices
+          {invoiceCritical > 0 && (
+            <span style={{ marginLeft: 6, background: '#DC2626', color: '#fff', borderRadius: 99, padding: '0 7px', fontSize: '0.7rem', fontWeight: 700 }}>
+              {invoiceCritical}
+            </span>
+          )}
+          {invoiceCritical === 0 && invoiceDue > 0 && (
+            <span style={{ marginLeft: 6, background: 'var(--warning, #F59E0B)', color: '#fff', borderRadius: 99, padding: '0 7px', fontSize: '0.7rem', fontWeight: 700 }}>
+              {invoiceDue}
+            </span>
+          )}
+        </button>
         <button className={`tab ${tab === 'profile' ? 'active' : ''}`} onClick={() => setTab('profile')}>
           My Profile
         </button>
       </div>
+
+      {tab === 'invoices' && (
+        <InvoiceFollowUps refreshSignal={invoiceRefresh} onChange={fetchData} />
+      )}
 
       {tab === 'followups' && (
         <div>
@@ -372,6 +417,26 @@ export default function EmployeeDashboard() {
                         <span className="mi-title">{fm.financialMilestoneId}: {fm.title}</span>
                         <span className="mi-amount">{'₹'}{(fm.amount / 1000).toFixed(0)}K</span>
                         <span className={`badge badge-${fm.status}`}>{fm.status.replace('_', ' ')}</span>
+                        {!isHeld && (
+                          <span className="btn-group" style={{ marginLeft: 8 }}>
+                            {fm.status === 'pending' && (
+                              <button
+                                className="btn btn-sm btn-blue"
+                                onClick={() => setRaiseModal({ projectId: p.projectId, milestone: fm })}
+                              >
+                                Raise
+                              </button>
+                            )}
+                            {fm.status === 'in_progress' && (
+                              <button
+                                className="btn btn-sm btn-green"
+                                onClick={() => setCollectModal({ projectId: p.projectId, milestone: fm })}
+                              >
+                                Collected
+                              </button>
+                            )}
+                          </span>
+                        )}
                       </div>
                       {fm.technicalMilestones.map(tm => (
                         <div key={tm.technicalMilestoneId} className="milestone-item" style={{ marginLeft: 16 }}>
@@ -726,6 +791,23 @@ export default function EmployeeDashboard() {
 
           </div>
         </div>
+      )}
+
+      {raiseModal && (
+        <RaiseInvoiceModal
+          projectId={raiseModal.projectId}
+          milestone={raiseModal.milestone}
+          onClose={() => setRaiseModal(null)}
+          onDone={afterInvoiceAction}
+        />
+      )}
+      {collectModal && (
+        <CollectInvoiceModal
+          projectId={collectModal.projectId}
+          milestone={collectModal.milestone}
+          onClose={() => setCollectModal(null)}
+          onDone={afterInvoiceAction}
+        />
       )}
     </div>
   );

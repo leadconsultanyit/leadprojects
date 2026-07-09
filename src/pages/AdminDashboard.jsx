@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import ProjectForm from '../components/ProjectForm';
 import RevenueDashboard from '../components/RevenueDashboard';
+import InvoiceFollowUps from '../components/InvoiceFollowUps';
+import { invoiceFollowUpStatus } from '../utils/invoiceFollowUp';
 import { fuzzyFilterSort } from '../utils/fuzzy';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -107,6 +109,11 @@ export default function AdminDashboard() {
 
   const fetchUsers = async () => { setUsers((await axios.get('/api/users')).data); };
   const fetchProjects = async () => { setProjects((await axios.get('/api/projects')).data); };
+
+  // Invoice follow-up alert counts (raised-but-uncollected milestones) for the tab badge.
+  const openInvoiceFms = projects.flatMap(p => (p.financialMilestones || []).filter(fm => fm.status === 'in_progress'));
+  const invoiceCritical = openInvoiceFms.filter(fm => invoiceFollowUpStatus(fm).critical).length;
+  const invoiceDue = openInvoiceFms.filter(fm => { const s = invoiceFollowUpStatus(fm); return s.alerting && !s.critical; }).length;
 
   const verifyUser = async (id) => { await axios.put(`/api/users/${id}/verify`); fetchUsers(); };
   const deleteUser = async (id) => {
@@ -1087,10 +1094,26 @@ export default function AdminDashboard() {
         <button className={`tab ${tab === 'revenue' ? 'active' : ''}`} onClick={() => setTab('revenue')}>
           Revenue Dashboard
         </button>
+        <button className={`tab ${tab === 'invoices' ? 'active' : ''}`} onClick={() => setTab('invoices')}>
+          Invoice Follow-ups
+          {invoiceCritical > 0 && (
+            <span style={{ marginLeft: 6, background: '#DC2626', color: '#fff', borderRadius: 99, padding: '0 7px', fontSize: '0.7rem', fontWeight: 700 }}>
+              {invoiceCritical}
+            </span>
+          )}
+          {invoiceCritical === 0 && invoiceDue > 0 && (
+            <span style={{ marginLeft: 6, background: 'var(--warning, #F59E0B)', color: '#fff', borderRadius: 99, padding: '0 7px', fontSize: '0.7rem', fontWeight: 700 }}>
+              {invoiceDue}
+            </span>
+          )}
+        </button>
       </div>
 
       {/* ========== REVENUE DASHBOARD TAB ========== */}
       {tab === 'revenue' && <RevenueDashboard />}
+
+      {/* ========== INVOICE FOLLOW-UPS TAB ========== */}
+      {tab === 'invoices' && <InvoiceFollowUps />}
 
       {/* ========== DASHBOARD TAB ========== */}
       {tab === 'dashboard' && (

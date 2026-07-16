@@ -23,7 +23,7 @@ export function RaiseInvoiceModal({ projectId, milestone, onClose, onDone }) {
   const [error, setError] = useState('');
 
   const submit = async () => {
-    if (!invoiceNumber.trim()) { setError('Invoice number is required'); return; }
+    if (!invoiceNumber.trim()) { setError('Work Order number is required'); return; }
     setLoading(true); setError('');
     try {
       await axios.put(`/api/projects/${projectId}/financial-action`, {
@@ -51,9 +51,9 @@ export function RaiseInvoiceModal({ projectId, milestone, onClose, onDone }) {
           </p>
           {error && <div className="auth-error" style={{ marginBottom: 12 }}>{error}</div>}
           <div className="form-group">
-            <label>Invoice Number *</label>
+            <label>Work Order Number *</label>
             <input value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)}
-              placeholder="e.g. INV-2026-014" autoFocus />
+              placeholder="e.g. WO-2026-014" autoFocus />
           </div>
           <div className="form-group">
             <label>Invoice Date</label>
@@ -109,7 +109,7 @@ export function CollectInvoiceModal({ projectId, milestone, onClose, onDone }) {
         <div className="modal-body">
           <p style={{ marginBottom: 12, fontSize: '0.9rem' }}>
             <strong>{milestone.title}</strong> · {inr(milestone.amount)}
-            {milestone.invoiceNumber && <> · Invoice {milestone.invoiceNumber}</>}
+            {milestone.invoiceNumber && <> · Work Order {milestone.invoiceNumber}</>}
           </p>
           {error && <div className="auth-error" style={{ marginBottom: 12 }}>{error}</div>}
           <div className="form-group">
@@ -168,7 +168,7 @@ function FollowUpCard({ item, onAction, busy }) {
             {!st.critical && st.alerting && <span className="badge" style={{ marginLeft: 8, background: '#F59E0B', color: '#fff' }}>Follow-up due</span>}
           </div>
           <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-            {item.title} · {inr(item.amount)} · Invoice {item.invoiceNumber || '—'} ({fmtDate(item.invoiceDate)})
+            {item.title} · {inr(item.amount)} · Work Order {item.invoiceNumber || '—'} ({fmtDate(item.invoiceDate)})
           </div>
           <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: 2 }}>
             {st.elapsed != null ? `${st.elapsed} day(s) since invoice` : 'Not yet dated'}

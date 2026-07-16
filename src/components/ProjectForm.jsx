@@ -265,13 +265,13 @@ export default function ProjectForm({ project, onSave, onCancel }) {
             <label>Name</label>
             <input value={form.contactPoint.name}
               onChange={e => setForm({ ...form, contactPoint: { ...form.contactPoint, name: e.target.value } })}
-              placeholder="Contact person name" required />
+              placeholder="Contact person name" />
           </div>
           <div className="form-group">
             <label>Designation</label>
             <input value={form.contactPoint.designation}
               onChange={e => setForm({ ...form, contactPoint: { ...form.contactPoint, designation: e.target.value } })}
-              placeholder="Designation" required />
+              placeholder="Designation" />
           </div>
         </div>
         <div className="inline-fields">
@@ -279,13 +279,13 @@ export default function ProjectForm({ project, onSave, onCancel }) {
             <label>Phone Number</label>
             <input value={form.contactPoint.number}
               onChange={e => setForm({ ...form, contactPoint: { ...form.contactPoint, number: e.target.value } })}
-              placeholder="+91-XXXXXXXXXX" required />
+              placeholder="+91-XXXXXXXXXX" />
           </div>
           <div className="form-group">
             <label>Email ID</label>
             <input type="email" value={form.contactPoint.mailId}
               onChange={e => setForm({ ...form, contactPoint: { ...form.contactPoint, mailId: e.target.value } })}
-              placeholder="email@company.com" required />
+              placeholder="email@company.com" />
           </div>
         </div>
       </div>

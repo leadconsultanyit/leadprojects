@@ -1,32 +1,62 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 const VERTICALS = ['ESG', 'Green Building Certification', 'MEFP Design'];
 
+// Registration progress is saved to localStorage on this device so a partially
+// filled multi-step form survives a refresh/close, and is cleared on success.
+// Password is intentionally never persisted.
+const DRAFT_KEY = 'lead_register_draft_v1';
+
+const EMPTY_PROFILE = {
+  designation: '',
+  yearsOfExperience: '',
+  vertical: [],
+  contactNumber: '',
+  credentials: [],
+  qualifications: [],
+  expertise: [],
+  pastProjects: [],
+  pastExperience: [],
+  professionalSummary: ''
+};
+
+function loadDraft() {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
 export default function Register() {
-  const [step, setStep] = useState(1);
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+  const draft = useRef(loadDraft()).current;
+  const [step, setStep] = useState(draft.step || 1);
+  const [name, setName] = useState(draft.name || '');
+  const [email, setEmail] = useState(draft.email || '');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState('employee');
+  const [role, setRole] = useState(draft.role || 'employee');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { register } = useAuth();
   const navigate = useNavigate();
 
-  const [profileForm, setProfileForm] = useState({
-    designation: '',
-    yearsOfExperience: '',
-    vertical: [],
-    contactNumber: '',
-    credentials: [],
-    qualifications: [],
-    expertise: [],
-    pastProjects: [],
-    pastExperience: [],
-    professionalSummary: ''
-  });
+  const [profileForm, setProfileForm] = useState({ ...EMPTY_PROFILE, ...(draft.profileForm || {}) });
+
+  // Persist the in-progress form (excluding password) on every change.
+  useEffect(() => {
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ step, name, email, role, profileForm }));
+    } catch {}
+  }, [step, name, email, role, profileForm]);
+
+  const clearDraft = () => {
+    try {
+      localStorage.removeItem(DRAFT_KEY);
+    } catch {}
+  };
 
   const handleStep1 = async (e) => {
     e.preventDefault();
@@ -36,6 +66,7 @@ export default function Register() {
       setLoading(true);
       try {
         const user = await register(name, email, password, role, null, null);
+        clearDraft();
         if (user.role === 'business') navigate('/business');
         else navigate('/login');
       } catch (err) {
@@ -55,6 +86,7 @@ export default function Register() {
     setLoading(true);
     try {
       const user = await register(name, email, password, role, null, profileForm);
+      clearDraft();
       navigate('/employee');
     } catch (err) {
       setError(err.response?.data?.message || 'Registration failed');

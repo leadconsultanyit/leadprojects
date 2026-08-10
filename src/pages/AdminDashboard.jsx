@@ -6,6 +6,7 @@ import RevenueDashboard from '../components/RevenueDashboard';
 import InvoiceFollowUps from '../components/InvoiceFollowUps';
 import { invoiceFollowUpStatus } from '../utils/invoiceFollowUp';
 import { fuzzyFilterSort } from '../utils/fuzzy';
+import { userCredentials } from '../utils/profile';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, AreaChart, Area, ComposedChart
@@ -1356,8 +1357,8 @@ export default function AdminDashboard() {
                         <td>{u.employeeId || '-'}</td>
                         <td>
                           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                            {(u.credentials || []).slice(0, 3).map(c => <span key={c} className="meta-tag">{c}</span>)}
-                            {(u.credentials || []).length > 3 && <span className="meta-tag">+{u.credentials.length - 3}</span>}
+                            {userCredentials(u).slice(0, 3).map(c => <span key={c} className="meta-tag">{c}</span>)}
+                            {userCredentials(u).length > 3 && <span className="meta-tag">+{userCredentials(u).length - 3}</span>}
                           </div>
                         </td>
                         <td>
@@ -1394,8 +1395,8 @@ export default function AdminDashboard() {
                       <td>{u.assignedProjects?.length || 0}</td>
                       <td>
                         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxWidth: 250 }}>
-                          {(u.credentials || []).slice(0, 4).map(c => <span key={c} className="meta-tag">{c}</span>)}
-                          {(u.credentials || []).length > 4 && <span className="meta-tag">+{u.credentials.length - 4}</span>}
+                          {userCredentials(u).slice(0, 4).map(c => <span key={c} className="meta-tag">{c}</span>)}
+                          {userCredentials(u).length > 4 && <span className="meta-tag">+{userCredentials(u).length - 4}</span>}
                         </div>
                       </td>
                       <td>

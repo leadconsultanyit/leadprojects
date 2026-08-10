@@ -3,6 +3,7 @@ import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import InvoiceFollowUps, { RaiseInvoiceModal, CollectInvoiceModal } from '../components/InvoiceFollowUps';
 import { invoiceFollowUpStatus } from '../utils/invoiceFollowUp';
+import { userCredentials } from '../utils/profile';
 
 const VERTICALS = ['ESG', 'Green Building Certification', 'MEFP Design'];
 
@@ -246,7 +247,7 @@ export default function EmployeeDashboard() {
           <div className="stat-label">In Progress</div>
         </div>
         <div className="stat-box">
-          <div className="stat-value">{(profile?.credentials || []).length}</div>
+          <div className="stat-value">{userCredentials(profile).length}</div>
           <div className="stat-label">Skills Matched</div>
         </div>
       </div>

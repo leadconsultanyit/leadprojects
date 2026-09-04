@@ -35,6 +35,11 @@ export default function EmployeeDashboard() {
   const [profileForm, setProfileForm] = useState(null);
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileMsg, setProfileMsg] = useState('');
+  // Pending text in the "type and press Enter to add" boxes for credentials and
+  // expertise. Kept in state (not just the raw input) so a value the user typed
+  // but didn't press Enter on still gets committed when they click Save.
+  const [credInput, setCredInput] = useState('');
+  const [expInput, setExpInput] = useState('');
 
   useEffect(() => {
     fetchData();
@@ -173,12 +178,35 @@ export default function EmployeeDashboard() {
     }
   };
 
+  // Append a value to a tag-list field (credentials/expertise), skipping blanks
+  // and duplicates. Uses a functional update so it's safe to call from onBlur
+  // right before saveProfile reads the form.
+  const addTag = (field, value) => {
+    const v = (value || '').trim();
+    if (!v) return;
+    setProfileForm(f => {
+      const cur = f || buildFormFromProfile(profile || {});
+      if ((cur[field] || []).includes(v)) return cur;
+      return { ...cur, [field]: [...(cur[field] || []), v] };
+    });
+  };
+
   const saveProfile = async () => {
     setProfileSaving(true);
     setProfileMsg('');
+    // Flush any text still sitting in the tag inputs so a credential/expertise
+    // the user typed but didn't press Enter on isn't silently dropped on save.
+    const payload = { ...pf };
+    const cred = credInput.trim();
+    if (cred && !payload.credentials.includes(cred)) payload.credentials = [...payload.credentials, cred];
+    const exp = expInput.trim();
+    if (exp && !payload.expertise.includes(exp)) payload.expertise = [...payload.expertise, exp];
     try {
-      const res = await axios.put('/api/users/me/profile', profileForm);
+      const res = await axios.put('/api/users/me/profile', payload);
       setProfile(res.data);
+      setProfileForm(buildFormFromProfile(res.data));
+      setCredInput('');
+      setExpInput('');
       setEditing(false);
       setProfileMsg('Profile saved successfully');
       await refreshUser();
@@ -492,7 +520,7 @@ export default function EmployeeDashboard() {
                   <button className="btn btn-sm btn-blue" onClick={saveProfile} disabled={profileSaving}>
                     {profileSaving ? 'Saving...' : 'Save'}
                   </button>
-                  <button className="btn btn-sm btn-outline" onClick={() => { setEditing(false); setProfileForm(buildFormFromProfile(profile || {})); }}>
+                  <button className="btn btn-sm btn-outline" onClick={() => { setEditing(false); setProfileForm(buildFormFromProfile(profile || {})); setCredInput(''); setExpInput(''); }}>
                     Cancel
                   </button>
                 </div>
@@ -593,13 +621,16 @@ export default function EmployeeDashboard() {
                     ))}
                   </div>
                   <input type="text" placeholder="Type and press Enter to add"
+                    value={credInput}
+                    onChange={e => setCredInput(e.target.value)}
                     onKeyDown={e => {
-                      if (e.key === 'Enter' && e.target.value.trim()) {
+                      if (e.key === 'Enter') {
                         e.preventDefault();
-                        setProfileForm({ ...pf, credentials: [...pf.credentials, e.target.value.trim()] });
-                        e.target.value = '';
+                        addTag('credentials', credInput);
+                        setCredInput('');
                       }
                     }}
+                    onBlur={() => { addTag('credentials', credInput); setCredInput(''); }}
                     style={{ width: '100%' }} />
                 </div>
               ) : (
@@ -625,13 +656,16 @@ export default function EmployeeDashboard() {
                     ))}
                   </div>
                   <input type="text" placeholder="Type and press Enter to add"
+                    value={expInput}
+                    onChange={e => setExpInput(e.target.value)}
                     onKeyDown={e => {
-                      if (e.key === 'Enter' && e.target.value.trim()) {
+                      if (e.key === 'Enter') {
                         e.preventDefault();
-                        setProfileForm({ ...pf, expertise: [...pf.expertise, e.target.value.trim()] });
-                        e.target.value = '';
+                        addTag('expertise', expInput);
+                        setExpInput('');
                       }
                     }}
+                    onBlur={() => { addTag('expertise', expInput); setExpInput(''); }}
                     style={{ width: '100%' }} />
                 </div>
               ) : (

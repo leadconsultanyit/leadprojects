@@ -16,6 +16,16 @@ import * as XLSX from 'xlsx';
 const DEFAULT_LOSS_REASONS = ['Dropped', 'To other consultants', 'Low Cost', 'Arch dependent', 'Non-responsive', 'Budget constraint', 'ESG', 'Other'];
 const CHART_COLORS = ['#059669', '#7C3AED', '#0891B2', '#D97706', '#E11D48', '#047857', '#6D28D9', '#14B8A6'];
 
+// Base value for milestone % calculations = the LATEST proposal revision.
+// revisions[] is append-only (revisions[0] is the original "Initial proposal"),
+// so we must read the last entry — proposalValue/totalProposedMoney are kept in
+// sync with it and act as fallbacks for projects created before revisions existed.
+const baseProposalValue = (p) => {
+  if (!p) return 0;
+  const revs = p.revisions || [];
+  return (revs.length > 0 && revs[revs.length - 1]?.amount) || p.proposalValue || p.totalProposedMoney || 0;
+};
+
 const fmtFollowUpDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
 const daysUntilDate = (d) => d == null ? null : Math.ceil((new Date(d) - new Date()) / 86400000);
 // Alert level for a pending follow-up: 'overdue', 'due-soon' (<=3 days), or null.
@@ -89,6 +99,12 @@ export default function AdminDashboard() {
   const [revisionAmount, setRevisionAmount] = useState('');
   const [revisionNotes, setRevisionNotes] = useState('');
 
+  // Milestone stage presets ("metadata") — global defaults that pre-fill the
+  // milestone modal; each row stays editable per project. Managed in Settings tab.
+  const [milestonePresets, setMilestonePresets] = useState([]);
+  const [presetDraft, setPresetDraft] = useState(null); // editable copy while on Settings tab
+  const [presetSaveMsg, setPresetSaveMsg] = useState('');
+
   // Completed projects
   const [completedProjects, setCompletedProjects] = useState([]);
   const [completedFilter, setCompletedFilter] = useState({ search: '', ratingSystem: '', buildingType: '', location: '', status: '', dateFrom: '', dateTo: '' });
@@ -97,12 +113,76 @@ export default function AdminDashboard() {
   const [completedImportMsg, setCompletedImportMsg] = useState('');
 
   useEffect(() => {
-    fetchUsers(); fetchProjects();
+    fetchUsers(); fetchProjects(); fetchSettings();
     axios.get('/api/projects/metadata/all').then(res => {
       const existing = (res.data.lossReasons || []).filter(r => r && !DEFAULT_LOSS_REASONS.includes(r));
       setDynamicLossReasons(existing);
     }).catch(() => {});
   }, []);
+
+  const fetchSettings = async () => {
+    try {
+      const res = await axios.get('/api/settings');
+      setMilestonePresets(res.data?.milestonePresets?.financial || []);
+    } catch { /* presets are optional */ }
+  };
+
+  // Build the milestone-modal rows from the saved presets. Each preset FM becomes
+  // an editable milestone; `amount` holds the percent (the modal treats it as % of
+  // proposal). Falls back to a single blank row when no presets are configured.
+  const presetMilestoneRows = () => {
+    if (!milestonePresets.length) {
+      return [{
+        financialMilestoneId: 'FM-1', title: '', amount: '',
+        technicalMilestones: [{ technicalMilestoneId: 'TM-1-1', title: '', expectedDate: '' }]
+      }];
+    }
+    return milestonePresets.map((fm, i) => {
+      const tms = (fm.technicalMilestones || []).filter(tm => tm.title);
+      return {
+        financialMilestoneId: `FM-${i + 1}`,
+        title: fm.title || '',
+        amount: fm.percent ?? '',
+        technicalMilestones: (tms.length ? tms : [{ title: '' }]).map((tm, j) => ({
+          technicalMilestoneId: `TM-${i + 1}-${j + 1}`, title: tm.title || '', expectedDate: ''
+        }))
+      };
+    });
+  };
+
+  // ---- Milestone preset editor (Settings tab) ----
+  const presetTotalPct = (presetDraft || []).reduce((s, fm) => s + (Number(fm.percent) || 0), 0);
+  const updatePresetFM = (i, field, value) => {
+    setPresetDraft(prev => prev.map((fm, idx) => idx === i ? { ...fm, [field]: value } : fm));
+  };
+  const addPresetFM = () => setPresetDraft(prev => [...(prev || []), { title: '', percent: 0, technicalMilestones: [] }]);
+  const removePresetFM = (i) => setPresetDraft(prev => prev.filter((_, idx) => idx !== i));
+  const addPresetTM = (i) => setPresetDraft(prev => prev.map((fm, idx) =>
+    idx === i ? { ...fm, technicalMilestones: [...(fm.technicalMilestones || []), { title: '' }] } : fm));
+  const updatePresetTM = (i, j, value) => setPresetDraft(prev => prev.map((fm, idx) =>
+    idx === i ? { ...fm, technicalMilestones: fm.technicalMilestones.map((tm, k) => k === j ? { title: value } : tm) } : fm));
+  const removePresetTM = (i, j) => setPresetDraft(prev => prev.map((fm, idx) =>
+    idx === i ? { ...fm, technicalMilestones: fm.technicalMilestones.filter((_, k) => k !== j) } : fm));
+  const savePresets = async () => {
+    setPresetSaveMsg('');
+    const cleaned = (presetDraft || [])
+      .map(fm => ({
+        title: (fm.title || '').trim(),
+        percent: Math.max(0, Math.min(100, Number(fm.percent) || 0)),
+        technicalMilestones: (fm.technicalMilestones || []).map(tm => ({ title: (tm.title || '').trim() })).filter(tm => tm.title)
+      }))
+      .filter(fm => fm.title);
+    try {
+      const res = await axios.put('/api/settings', { milestonePresets: { financial: cleaned } });
+      const saved = res.data?.milestonePresets?.financial || [];
+      setMilestonePresets(saved);
+      setPresetDraft(saved.map(fm => ({ ...fm, technicalMilestones: (fm.technicalMilestones || []).map(tm => ({ ...tm })) })));
+      setPresetSaveMsg('Presets saved.');
+      setTimeout(() => setPresetSaveMsg(''), 3000);
+    } catch (err) {
+      setPresetSaveMsg(err.response?.data?.message || 'Failed to save presets');
+    }
+  };
 
   useEffect(() => {
     if (tab === 'completed') fetchCompletedProjects();
@@ -138,10 +218,7 @@ export default function AdminDashboard() {
       const res = await axios.post('/api/projects', data);
       setShowProjectModal(false);
       setProposalMilestonesModal(res.data);
-      setWorkorderMilestones([{
-        financialMilestoneId: 'FM-1', title: '', amount: '',
-        technicalMilestones: [{ technicalMilestoneId: 'TM-1-1', title: '', expectedDate: '' }]
-      }]);
+      setWorkorderMilestones(presetMilestoneRows());
       setActionError('');
       fetchProjects();
     }
@@ -335,7 +412,7 @@ export default function AdminDashboard() {
     setSelectedEmployees([]);
     setWorkorderMaxEmployees(project.maxEmployees ?? 5);
     setForceAssign(false);
-    const baseAmount = project.revisions?.[0]?.amount || project.proposalValue || project.totalProposedMoney || 0;
+    const baseAmount = baseProposalValue(project);
     const existingFMs = (project.financialMilestones || []).filter(fm => fm.title);
     setWorkorderMilestones(existingFMs.length > 0
       ? existingFMs.map((fm, i) => ({
@@ -347,10 +424,7 @@ export default function AdminDashboard() {
             technicalMilestoneId: tm.technicalMilestoneId || `TM-${i + 1}-${j + 1}`
           }))
         }))
-      : [{
-          financialMilestoneId: 'FM-1', title: '', amount: '',
-          technicalMilestones: [{ technicalMilestoneId: 'TM-1-1', title: '', expectedDate: '' }]
-        }]);
+      : presetMilestoneRows());
     setLoadingEmployees(true);
     setActionError('');
     try {
@@ -402,7 +476,7 @@ export default function AdminDashboard() {
 
   const moveToWorkorder = async () => {
     if (selectedEmployees.length < 1) { setActionError('Select at least 1 employee'); return; }
-    const baseAmount = workorderModal.revisions?.[0]?.amount || workorderModal.proposalValue || workorderModal.totalProposedMoney || 0;
+    const baseAmount = baseProposalValue(workorderModal);
     const milestones = workorderMilestones
       .filter(fm => fm.title.trim())
       .map(fm => ({
@@ -550,8 +624,31 @@ export default function AdminDashboard() {
     }
   };
 
+  // Open the milestone modal for a proposal OR a work-order project. Existing
+  // milestone amounts are stored as absolute values (computed off the proposal
+  // value at save time); convert them back to a percentage of the CURRENT base
+  // so the "% of proposal" field shows a sensible number and re-saving recomputes
+  // correctly off the latest revision.
+  const openMilestonesModal = (p) => {
+    const base = baseProposalValue(p);
+    const existingFMs = (p.financialMilestones || []).filter(fm => fm.title);
+    setProposalMilestonesModal(p);
+    setWorkorderMilestones(existingFMs.length > 0
+      ? existingFMs.map((fm, i) => ({
+          ...fm,
+          financialMilestoneId: fm.financialMilestoneId || `FM-${i + 1}`,
+          amount: base > 0 ? Math.round((fm.amount / base) * 1000) / 10 : fm.amount,
+          technicalMilestones: (fm.technicalMilestones || []).map((tm, j) => ({
+            ...tm,
+            technicalMilestoneId: tm.technicalMilestoneId || `TM-${i + 1}-${j + 1}`
+          }))
+        }))
+      : presetMilestoneRows());
+    setActionError('');
+  };
+
   const saveProposalMilestones = async () => {
-    const baseAmount = proposalMilestonesModal.revisions?.[0]?.amount || proposalMilestonesModal.proposalValue || proposalMilestonesModal.totalProposedMoney || 0;
+    const baseAmount = baseProposalValue(proposalMilestonesModal);
     const milestones = workorderMilestones
       .filter(fm => fm.title.trim())
       .map(fm => ({
@@ -1108,6 +1205,10 @@ export default function AdminDashboard() {
             </span>
           )}
         </button>
+        <button className={`tab ${tab === 'settings' ? 'active' : ''}`}
+          onClick={() => { setTab('settings'); setPresetDraft(milestonePresets.map(fm => ({ ...fm, technicalMilestones: (fm.technicalMilestones || []).map(tm => ({ ...tm })) }))); setPresetSaveMsg(''); }}>
+          Settings
+        </button>
       </div>
 
       {/* ========== REVENUE DASHBOARD TAB ========== */}
@@ -1115,6 +1216,76 @@ export default function AdminDashboard() {
 
       {/* ========== INVOICE FOLLOW-UPS TAB ========== */}
       {tab === 'invoices' && <InvoiceFollowUps />}
+
+      {/* ========== SETTINGS TAB ========== */}
+      {tab === 'settings' && (
+        <div>
+          <div className="card" style={{ maxWidth: 900 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8 }}>
+              <div>
+                <h2 style={{ margin: 0 }}>Milestone Stage Presets</h2>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: 4, maxWidth: 560 }}>
+                  Default payment stages (title + % of proposal value) that pre-fill the milestone entry
+                  when a proposal moves to a work order. Every field stays editable per project. Optional
+                  technical milestones can be listed under each stage.
+                </p>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: 600, color: presetTotalPct === 100 ? 'var(--success)' : 'var(--warning, #D97706)' }}>
+                  Total: {presetTotalPct}%
+                </div>
+                {presetTotalPct !== 100 && (
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>(usually adds up to 100%)</div>
+                )}
+              </div>
+            </div>
+
+            {presetSaveMsg && (
+              <div style={{ margin: '10px 0', padding: '8px 12px', borderRadius: 6, fontSize: '0.85rem',
+                background: presetSaveMsg.includes('saved') ? 'rgba(5,150,105,0.1)' : 'rgba(220,38,38,0.1)',
+                color: presetSaveMsg.includes('saved') ? 'var(--success)' : 'var(--error, #DC2626)' }}>
+                {presetSaveMsg}
+              </div>
+            )}
+
+            <div style={{ marginTop: 16 }}>
+              {(presetDraft || []).map((fm, i) => (
+                <div key={i} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 14, marginBottom: 10, background: 'var(--card, #F9FAFB)' }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-secondary)', minWidth: 44 }}>FM-{i + 1}</span>
+                    <input value={fm.title} onChange={e => updatePresetFM(i, 'title', e.target.value)}
+                      placeholder="Stage description (e.g., Advance along with work order)" style={{ flex: 1 }} />
+                    <input type="number" min={0} max={100} value={fm.percent}
+                      onChange={e => updatePresetFM(i, 'percent', e.target.value)}
+                      placeholder="%" style={{ width: 80 }} />
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>%</span>
+                    <button type="button" className="btn btn-sm btn-red" style={{ padding: '2px 8px' }}
+                      onClick={() => removePresetFM(i)}>Remove</button>
+                  </div>
+                  <div style={{ marginLeft: 52 }}>
+                    {(fm.technicalMilestones || []).map((tm, j) => (
+                      <div key={j} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', minWidth: 50 }}>TM-{i + 1}-{j + 1}</span>
+                        <input value={tm.title} onChange={e => updatePresetTM(i, j, e.target.value)}
+                          placeholder="Technical milestone title (optional)" style={{ flex: 1 }} />
+                        <button type="button" className="btn-icon" onClick={() => removePresetTM(i, j)}
+                          style={{ fontSize: '0.8rem', color: 'var(--error)' }}>&#10005;</button>
+                      </div>
+                    ))}
+                    <button type="button" className="btn btn-sm btn-outline" onClick={() => addPresetTM(i)}
+                      style={{ marginTop: 4, fontSize: '0.78rem' }}>+ Add Technical Milestone</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+              <button type="button" className="btn btn-sm btn-outline" onClick={addPresetFM}>+ Add Financial Milestone</button>
+              <button type="button" className="btn btn-blue" onClick={savePresets}>Save Presets</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ========== DASHBOARD TAB ========== */}
       {tab === 'dashboard' && (
@@ -1498,21 +1669,7 @@ export default function AdminDashboard() {
                   onClick={() => { setRevisionModal(p); setRevisionAmount(''); setRevisionNotes(''); setActionError(''); }}>
                   + Revision
                 </button>
-                <button className="btn btn-sm btn-outline" onClick={() => {
-                  const existingFMs = (p.financialMilestones || []).filter(fm => fm.title);
-                  setProposalMilestonesModal(p);
-                  setWorkorderMilestones(existingFMs.length > 0
-                    ? existingFMs.map((fm, i) => ({
-                        ...fm,
-                        financialMilestoneId: fm.financialMilestoneId || `FM-${i + 1}`,
-                        technicalMilestones: (fm.technicalMilestones || []).map((tm, j) => ({
-                          ...tm,
-                          technicalMilestoneId: tm.technicalMilestoneId || `TM-${i + 1}-${j + 1}`
-                        }))
-                      }))
-                    : [{ financialMilestoneId: 'FM-1', title: '', amount: '', technicalMilestones: [{ technicalMilestoneId: 'TM-1-1', title: '', expectedDate: '' }] }]);
-                  setActionError('');
-                }}>
+                <button className="btn btn-sm btn-outline" onClick={() => openMilestonesModal(p)}>
                   {(p.financialMilestones || []).some(fm => fm.title) ? 'Edit Milestones' : '+ Milestones'}
                 </button>
                 {(p.financialMilestones || []).some(fm => fm.title) && (
@@ -1623,6 +1780,15 @@ export default function AdminDashboard() {
                       <button className="btn btn-sm btn-green" onClick={() => reactivateWorkorder(p)}>Reactivate</button>
                     )}
                     <button className="btn btn-sm btn-blue" onClick={() => openReassignModal(p)}>Re-assign</button>
+                    {(() => {
+                      const anyRaised = fms.some(fm => fm.status === 'in_progress' || fm.status === 'completed');
+                      return (
+                        <button className="btn btn-sm btn-outline"
+                          title={anyRaised ? 'Milestones are locked once an invoice has been raised' : 'Edit milestone stages & amounts (recalculates from the current proposal value)'}
+                          disabled={anyRaised}
+                          onClick={() => openMilestonesModal(p)}>Edit Milestones</button>
+                      );
+                    })()}
                     <button className="btn btn-sm btn-outline"
                       onClick={() => {
                         setInvoiceEmailsModal(p);
@@ -1727,7 +1893,7 @@ export default function AdminDashboard() {
                 </thead>
                 <tbody>
                   {projects.filter(p => p.approvedBudget).map(p => {
-                    const proposed = p.revisions?.[0]?.amount || p.proposalValue || p.totalProposedMoney || 0;
+                    const proposed = baseProposalValue(p);
                     const delta = p.approvedBudget - proposed;
                     const pct = proposed > 0 ? ((delta / proposed) * 100).toFixed(1) : 0;
                     return (
@@ -2106,7 +2272,7 @@ export default function AdminDashboard() {
         <div className="modal-overlay" onClick={() => { setProposalMilestonesModal(null); setWorkorderMilestones([]); }}>
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 850 }}>
             <div className="modal-header">
-              <h2>Add Milestones (Optional)</h2>
+              <h2>{(proposalMilestonesModal.financialMilestones || []).some(fm => fm.title) ? 'Edit Milestones' : 'Add Milestones (Optional)'}</h2>
               <button className="btn-icon" onClick={() => { setProposalMilestonesModal(null); setWorkorderMilestones([]); }}>&#10005;</button>
             </div>
             <div className="modal-body" style={{ maxHeight: '80vh' }}>
@@ -2114,11 +2280,11 @@ export default function AdminDashboard() {
                 <strong>{proposalMilestonesModal.projectName}</strong> ({proposalMilestonesModal.projectId})
               </p>
               <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 16 }}>
-                Proposal created. Optionally add financial and technical milestones now, or skip to do it later.
+                Amounts are calculated as a % of the current proposal value and saved when you click Save.
               </p>
               {actionError && <div className="auth-error">{actionError}</div>}
               {(() => {
-                const pmBase = proposalMilestonesModal.revisions?.[0]?.amount || proposalMilestonesModal.proposalValue || proposalMilestonesModal.totalProposedMoney || 0;
+                const pmBase = baseProposalValue(proposalMilestonesModal);
                 return pmBase > 0 && (
                   <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: 10 }}>
                     Base proposal value: <strong>{fmtMoney(pmBase)}</strong> — enter % for each milestone
@@ -2127,7 +2293,7 @@ export default function AdminDashboard() {
               })()}
               <h3 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: 8 }}>Financial & Technical Milestones</h3>
               {workorderMilestones.map((fm, fmIdx) => {
-                const pmBase = proposalMilestonesModal.revisions?.[0]?.amount || proposalMilestonesModal.proposalValue || proposalMilestonesModal.totalProposedMoney || 0;
+                const pmBase = baseProposalValue(proposalMilestonesModal);
                 const computedAmt = pmBase > 0 ? Math.round((Number(fm.amount) / 100) * pmBase) : 0;
                 return (
                 <div key={fmIdx} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 16, marginBottom: 12, background: 'var(--card, #F3F4F6)' }}>
@@ -2168,8 +2334,16 @@ export default function AdminDashboard() {
                   </div>
                 </div>
               ); })}
-              <button type="button" className="btn btn-sm btn-outline" onClick={addFinancialMilestone}
-                style={{ marginBottom: 16 }}>+ Add Financial Milestone</button>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+                <button type="button" className="btn btn-sm btn-outline" onClick={addFinancialMilestone}>+ Add Financial Milestone</button>
+                {milestonePresets.length > 0 && (
+                  <button type="button" className="btn btn-sm btn-outline"
+                    title="Replace the rows below with the default payment-stage presets"
+                    onClick={() => { if (confirm('Replace current milestones with the default presets?')) setWorkorderMilestones(presetMilestoneRows()); }}>
+                    ↺ Apply preset ({milestonePresets.length})
+                  </button>
+                )}
+              </div>
             </div>
             <div className="modal-footer">
               <button className="btn btn-outline" onClick={() => { setProposalMilestonesModal(null); setWorkorderMilestones([]); }}>Skip</button>
@@ -2493,7 +2667,7 @@ export default function AdminDashboard() {
 
               <h3 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: 8 }}>Financial & Technical Milestones</h3>
               {(() => {
-                const woBase = workorderModal.revisions?.[0]?.amount || workorderModal.proposalValue || workorderModal.totalProposedMoney || 0;
+                const woBase = baseProposalValue(workorderModal);
                 return woBase > 0 && (
                   <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: 10 }}>
                     Base proposal value: <strong>{fmtMoney(woBase)}</strong> — enter % for each milestone
@@ -2501,7 +2675,7 @@ export default function AdminDashboard() {
                 );
               })()}
               {workorderMilestones.map((fm, fmIdx) => {
-                const woBase = workorderModal.revisions?.[0]?.amount || workorderModal.proposalValue || workorderModal.totalProposedMoney || 0;
+                const woBase = baseProposalValue(workorderModal);
                 const computedAmt = woBase > 0 ? Math.round((Number(fm.amount) / 100) * woBase) : 0;
                 return (
                 <div key={fmIdx} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 16, marginBottom: 12, background: 'var(--card, #F3F4F6)' }}>
@@ -2544,8 +2718,16 @@ export default function AdminDashboard() {
                   </div>
                 </div>
               ); })}
-              <button type="button" className="btn btn-sm btn-outline" onClick={addFinancialMilestone}
-                style={{ marginBottom: 16 }}>+ Add Financial Milestone</button>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+                <button type="button" className="btn btn-sm btn-outline" onClick={addFinancialMilestone}>+ Add Financial Milestone</button>
+                {milestonePresets.length > 0 && (
+                  <button type="button" className="btn btn-sm btn-outline"
+                    title="Replace the rows below with the default payment-stage presets"
+                    onClick={() => { if (confirm('Replace current milestones with the default presets?')) setWorkorderMilestones(presetMilestoneRows()); }}>
+                    ↺ Apply preset ({milestonePresets.length})
+                  </button>
+                )}
+              </div>
             </div>
             <div className="modal-footer">
               <button className="btn btn-outline" onClick={() => setWorkorderModal(null)}>Cancel</button>

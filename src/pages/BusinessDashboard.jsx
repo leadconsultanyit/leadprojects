@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import ProjectForm from '../components/ProjectForm';
 import { fuzzyFilterSort } from '../utils/fuzzy';
+import { milestoneBase, milestonePercent, serializeMilestones } from '../utils/milestones';
 import * as XLSX from 'xlsx';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -186,10 +187,11 @@ export default function BusinessDashboard() {
     setWorkorderMilestones(existingFMs.length > 0
       ? existingFMs.map((fm, i) => ({
           ...fm,
-          financialMilestoneId: fm.financialMilestoneId || `FM-${i + 1}`,
+          financialMilestoneId: `FM-${i + 1}`,
+          amount: milestonePercent(project, fm),
           technicalMilestones: (fm.technicalMilestones || []).map((tm, j) => ({
             ...tm,
-            technicalMilestoneId: tm.technicalMilestoneId || `TM-${i + 1}-${j + 1}`
+            technicalMilestoneId: `TM-${i + 1}-${j + 1}`
           }))
         }))
       : [{
@@ -244,16 +246,7 @@ export default function BusinessDashboard() {
 
   const moveToWorkorder = async () => {
     if (selectedEmployees.length < 1) { setActionError('Select at least 1 employee'); return; }
-    const milestones = workorderMilestones
-      .filter(fm => fm.title.trim())
-      .map(fm => ({
-        ...fm,
-        amount: Number(fm.amount) || 0,
-        status: 'pending',
-        technicalMilestones: fm.technicalMilestones
-          .filter(tm => tm.title.trim())
-          .map(tm => ({ ...tm, status: 'pending', expectedDate: tm.expectedDate || null }))
-      }));
+    const milestones = serializeMilestones(workorderModal, workorderMilestones);
     try {
       await axios.put(`/api/projects/${workorderModal.projectId}/change-stage`, {
         targetStage: 'workorder',
@@ -296,16 +289,7 @@ export default function BusinessDashboard() {
   };
 
   const saveProposalMilestones = async () => {
-    const milestones = workorderMilestones
-      .filter(fm => fm.title.trim())
-      .map(fm => ({
-        ...fm,
-        amount: Number(fm.amount) || 0,
-        status: 'pending',
-        technicalMilestones: fm.technicalMilestones
-          .filter(tm => tm.title.trim())
-          .map(tm => ({ ...tm, status: 'pending', expectedDate: tm.expectedDate || null }))
-      }));
+    const milestones = serializeMilestones(proposalMilestonesModal, workorderMilestones);
     try {
       await axios.put(`/api/projects/${proposalMilestonesModal.projectId}`, { financialMilestones: milestones });
       setProposalMilestonesModal(null); setWorkorderMilestones([]); setActionError(''); fetchData();
@@ -619,10 +603,11 @@ export default function BusinessDashboard() {
                       setWorkorderMilestones(existingFMs.length > 0
                         ? existingFMs.map((fm, i) => ({
                             ...fm,
-                            financialMilestoneId: fm.financialMilestoneId || `FM-${i + 1}`,
+                            financialMilestoneId: `FM-${i + 1}`,
+                            amount: milestonePercent(p, fm),
                             technicalMilestones: (fm.technicalMilestones || []).map((tm, j) => ({
                               ...tm,
-                              technicalMilestoneId: tm.technicalMilestoneId || `TM-${i + 1}-${j + 1}`
+                              technicalMilestoneId: `TM-${i + 1}-${j + 1}`
                             }))
                           }))
                         : [{ financialMilestoneId: 'FM-1', title: '', amount: '', technicalMilestones: [{ technicalMilestoneId: 'TM-1-1', title: '', expectedDate: '' }] }]);
@@ -1000,11 +985,23 @@ export default function BusinessDashboard() {
                 <strong>{proposalMilestonesModal.projectName}</strong> ({proposalMilestonesModal.projectId})
               </p>
               <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 16 }}>
-                Proposal created. Optionally add financial and technical milestones now, or skip to do it later.
+                Amounts are calculated as a % of the value below and saved when you click Save.
               </p>
               {actionError && <div className="auth-error">{actionError}</div>}
+              {(() => {
+                const base = milestoneBase(proposalMilestonesModal);
+                const approved = proposalMilestonesModal.approvedBudget > 0;
+                return base > 0 && (
+                  <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: 10 }}>
+                    {approved ? 'Approved budget' : 'Base proposal value'}: <strong>{fmtMoney(base)}</strong> — enter % for each milestone
+                  </div>
+                );
+              })()}
               <h3 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: 8 }}>Financial & Technical Milestones</h3>
-              {workorderMilestones.map((fm, fmIdx) => (
+              {workorderMilestones.map((fm, fmIdx) => {
+                const base = milestoneBase(proposalMilestonesModal);
+                const computedAmt = base > 0 ? Math.round((Number(fm.amount) / 100) * base) : 0;
+                return (
                 <div key={fmIdx} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 16, marginBottom: 12, background: 'var(--card, #F3F4F6)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                     <strong style={{ fontSize: '0.9rem' }}>Financial Milestone {fmIdx + 1}</strong>
@@ -1018,8 +1015,10 @@ export default function BusinessDashboard() {
                       <input value={fm.title} onChange={e => updateFM(fmIdx, 'title', e.target.value)} placeholder="e.g., Registration Payment" />
                     </div>
                     <div className="form-group" style={{ marginBottom: 8 }}>
-                      <label style={{ fontSize: '0.8rem' }}>Amount (INR)</label>
-                      <input type="number" value={fm.amount} onChange={e => updateFM(fmIdx, 'amount', e.target.value)} placeholder="Amount" />
+                      <label style={{ fontSize: '0.8rem' }}>
+                        Amount (% of value){base > 0 && computedAmt > 0 && <span style={{ color: 'var(--success)', marginLeft: 6 }}>= {fmtMoney(computedAmt)}</span>}
+                      </label>
+                      <input type="number" min={0} max={100} value={fm.amount} onChange={e => updateFM(fmIdx, 'amount', e.target.value)} placeholder="e.g. 20" />
                     </div>
                   </div>
                   <div style={{ marginLeft: 16 }}>
@@ -1040,7 +1039,7 @@ export default function BusinessDashboard() {
                       style={{ marginTop: 4, fontSize: '0.8rem' }}>+ Add Technical Milestone</button>
                   </div>
                 </div>
-              ))}
+              ); })}
               <button type="button" className="btn btn-sm btn-outline" onClick={addFinancialMilestone}
                 style={{ marginBottom: 16 }}>+ Add Financial Milestone</button>
             </div>
@@ -1226,7 +1225,19 @@ export default function BusinessDashboard() {
               )}
 
               <h3 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: 8 }}>Financial & Technical Milestones</h3>
-              {workorderMilestones.map((fm, fmIdx) => (
+              {(() => {
+                const base = milestoneBase(workorderModal);
+                const approved = workorderModal.approvedBudget > 0;
+                return base > 0 && (
+                  <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: 10 }}>
+                    {approved ? 'Approved budget' : 'Base proposal value'}: <strong>{fmtMoney(base)}</strong> — enter % for each milestone
+                  </div>
+                );
+              })()}
+              {workorderMilestones.map((fm, fmIdx) => {
+                const base = milestoneBase(workorderModal);
+                const computedAmt = base > 0 ? Math.round((Number(fm.amount) / 100) * base) : 0;
+                return (
                 <div key={fmIdx} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 16, marginBottom: 12, background: 'var(--card, #F3F4F6)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                     <strong style={{ fontSize: '0.9rem' }}>Financial Milestone {fmIdx + 1}</strong>
@@ -1240,8 +1251,10 @@ export default function BusinessDashboard() {
                       <input value={fm.title} onChange={e => updateFM(fmIdx, 'title', e.target.value)} placeholder="e.g., Registration Payment" />
                     </div>
                     <div className="form-group" style={{ marginBottom: 8 }}>
-                      <label style={{ fontSize: '0.8rem' }}>Amount (INR)</label>
-                      <input type="number" value={fm.amount} onChange={e => updateFM(fmIdx, 'amount', e.target.value)} placeholder="Amount" />
+                      <label style={{ fontSize: '0.8rem' }}>
+                        Amount (% of value){base > 0 && computedAmt > 0 && <span style={{ color: 'var(--success)', marginLeft: 6 }}>= {fmtMoney(computedAmt)}</span>}
+                      </label>
+                      <input type="number" min={0} max={100} value={fm.amount} onChange={e => updateFM(fmIdx, 'amount', e.target.value)} placeholder="e.g. 20" />
                     </div>
                   </div>
                   <div style={{ marginLeft: 16 }}>
@@ -1262,7 +1275,7 @@ export default function BusinessDashboard() {
                       style={{ marginTop: 4, fontSize: '0.8rem' }}>+ Add Technical Milestone</button>
                   </div>
                 </div>
-              ))}
+              ); })}
               <button type="button" className="btn btn-sm btn-outline" onClick={addFinancialMilestone}
                 style={{ marginBottom: 16 }}>+ Add Financial Milestone</button>
             </div>

@@ -7,6 +7,7 @@ import InvoiceFollowUps from '../components/InvoiceFollowUps';
 import { invoiceFollowUpStatus } from '../utils/invoiceFollowUp';
 import { fuzzyFilterSort } from '../utils/fuzzy';
 import { userCredentials } from '../utils/profile';
+import { baseProposalValue, milestoneBase, milestonePercent, serializeMilestones } from '../utils/milestones';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, AreaChart, Area, ComposedChart
@@ -15,42 +16,6 @@ import * as XLSX from 'xlsx';
 
 const DEFAULT_LOSS_REASONS = ['Dropped', 'To other consultants', 'Low Cost', 'Arch dependent', 'Non-responsive', 'Budget constraint', 'ESG', 'Other'];
 const CHART_COLORS = ['#059669', '#7C3AED', '#0891B2', '#D97706', '#E11D48', '#047857', '#6D28D9', '#14B8A6'];
-
-// Base value for milestone % calculations = the LATEST proposal revision.
-// revisions[] is append-only (revisions[0] is the original "Initial proposal"),
-// so we must read the last entry — proposalValue/totalProposedMoney are kept in
-// sync with it and act as fallbacks for projects created before revisions existed.
-const baseProposalValue = (p) => {
-  if (!p) return 0;
-  const revs = p.revisions || [];
-  return (revs.length > 0 && revs[revs.length - 1]?.amount) || p.proposalValue || p.totalProposedMoney || 0;
-};
-
-// The value milestone amounts should be a % of. Once a client approves a budget
-// (set at "Won"), that is the real contract value we invoice against, so it wins
-// over the proposal value. Otherwise fall back to the latest proposal revision.
-const milestoneBase = (p) => {
-  if (!p) return 0;
-  return (p.approvedBudget && p.approvedBudget > 0) ? p.approvedBudget : baseProposalValue(p);
-};
-
-// The base that EXISTING (legacy) stored milestone amounts were computed against,
-// used only to recover their original % when a milestone has no stored `percent`.
-// That was the first/original proposal (revisions[0]); proposalValue can since have
-// been overwritten by a revision, so revisions[0] is the reliable source.
-const legacySourceBase = (p) => {
-  if (!p) return 0;
-  const revs = p.revisions || [];
-  return revs[0]?.amount || p.proposalValue || p.totalProposedMoney || 0;
-};
-
-// Percent a stored milestone represents: its saved `percent` if present, else
-// derived from its absolute amount against the base it was originally computed on.
-const milestonePercent = (p, fm) => {
-  if (fm.percent != null && fm.percent !== '') return fm.percent;
-  const src = legacySourceBase(p);
-  return src > 0 ? Math.round((fm.amount / src) * 1000) / 10 : (fm.amount || 0);
-};
 
 const fmtFollowUpDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
 const daysUntilDate = (d) => d == null ? null : Math.ceil((new Date(d) - new Date()) / 86400000);
@@ -497,34 +462,6 @@ export default function AdminDashboard() {
     const ms = [...workorderMilestones];
     ms[fmIdx].technicalMilestones = ms[fmIdx].technicalMilestones.filter((_, i) => i !== tmIdx);
     setWorkorderMilestones(ms);
-  };
-
-  // Serialize milestone rows for saving: the `amount` field in the modal holds a
-  // percent; we renumber FM/TM IDs by position (so they are always sequential and
-  // in order), store the percent, and compute the absolute amount off the billing
-  // base (approved budget when set, else proposal value).
-  const serializeMilestones = (project, rows) => {
-    const base = milestoneBase(project);
-    return rows
-      .filter(fm => fm.title.trim())
-      .map((fm, idx) => {
-        const pct = Number(fm.amount) || 0;
-        return {
-          ...fm,
-          financialMilestoneId: `FM-${idx + 1}`,
-          percent: pct,
-          amount: base > 0 ? Math.round((pct / 100) * base) : pct,
-          status: 'pending',
-          technicalMilestones: fm.technicalMilestones
-            .filter(tm => tm.title.trim())
-            .map((tm, j) => ({
-              ...tm,
-              technicalMilestoneId: `TM-${idx + 1}-${j + 1}`,
-              status: 'pending',
-              expectedDate: tm.expectedDate || null
-            }))
-        };
-      });
   };
 
   const moveToWorkorder = async () => {

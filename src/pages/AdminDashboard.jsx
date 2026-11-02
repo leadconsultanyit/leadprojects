@@ -26,6 +26,32 @@ const baseProposalValue = (p) => {
   return (revs.length > 0 && revs[revs.length - 1]?.amount) || p.proposalValue || p.totalProposedMoney || 0;
 };
 
+// The value milestone amounts should be a % of. Once a client approves a budget
+// (set at "Won"), that is the real contract value we invoice against, so it wins
+// over the proposal value. Otherwise fall back to the latest proposal revision.
+const milestoneBase = (p) => {
+  if (!p) return 0;
+  return (p.approvedBudget && p.approvedBudget > 0) ? p.approvedBudget : baseProposalValue(p);
+};
+
+// The base that EXISTING (legacy) stored milestone amounts were computed against,
+// used only to recover their original % when a milestone has no stored `percent`.
+// That was the first/original proposal (revisions[0]); proposalValue can since have
+// been overwritten by a revision, so revisions[0] is the reliable source.
+const legacySourceBase = (p) => {
+  if (!p) return 0;
+  const revs = p.revisions || [];
+  return revs[0]?.amount || p.proposalValue || p.totalProposedMoney || 0;
+};
+
+// Percent a stored milestone represents: its saved `percent` if present, else
+// derived from its absolute amount against the base it was originally computed on.
+const milestonePercent = (p, fm) => {
+  if (fm.percent != null && fm.percent !== '') return fm.percent;
+  const src = legacySourceBase(p);
+  return src > 0 ? Math.round((fm.amount / src) * 1000) / 10 : (fm.amount || 0);
+};
+
 const fmtFollowUpDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
 const daysUntilDate = (d) => d == null ? null : Math.ceil((new Date(d) - new Date()) / 86400000);
 // Alert level for a pending follow-up: 'overdue', 'due-soon' (<=3 days), or null.
@@ -412,16 +438,15 @@ export default function AdminDashboard() {
     setSelectedEmployees([]);
     setWorkorderMaxEmployees(project.maxEmployees ?? 5);
     setForceAssign(false);
-    const baseAmount = baseProposalValue(project);
     const existingFMs = (project.financialMilestones || []).filter(fm => fm.title);
     setWorkorderMilestones(existingFMs.length > 0
       ? existingFMs.map((fm, i) => ({
           ...fm,
-          financialMilestoneId: fm.financialMilestoneId || `FM-${i + 1}`,
-          amount: baseAmount > 0 ? Math.round((fm.amount / baseAmount) * 1000) / 10 : fm.amount,
+          financialMilestoneId: `FM-${i + 1}`,
+          amount: milestonePercent(project, fm),
           technicalMilestones: (fm.technicalMilestones || []).map((tm, j) => ({
             ...tm,
-            technicalMilestoneId: tm.technicalMilestoneId || `TM-${i + 1}-${j + 1}`
+            technicalMilestoneId: `TM-${i + 1}-${j + 1}`
           }))
         }))
       : presetMilestoneRows());
@@ -474,19 +499,37 @@ export default function AdminDashboard() {
     setWorkorderMilestones(ms);
   };
 
+  // Serialize milestone rows for saving: the `amount` field in the modal holds a
+  // percent; we renumber FM/TM IDs by position (so they are always sequential and
+  // in order), store the percent, and compute the absolute amount off the billing
+  // base (approved budget when set, else proposal value).
+  const serializeMilestones = (project, rows) => {
+    const base = milestoneBase(project);
+    return rows
+      .filter(fm => fm.title.trim())
+      .map((fm, idx) => {
+        const pct = Number(fm.amount) || 0;
+        return {
+          ...fm,
+          financialMilestoneId: `FM-${idx + 1}`,
+          percent: pct,
+          amount: base > 0 ? Math.round((pct / 100) * base) : pct,
+          status: 'pending',
+          technicalMilestones: fm.technicalMilestones
+            .filter(tm => tm.title.trim())
+            .map((tm, j) => ({
+              ...tm,
+              technicalMilestoneId: `TM-${idx + 1}-${j + 1}`,
+              status: 'pending',
+              expectedDate: tm.expectedDate || null
+            }))
+        };
+      });
+  };
+
   const moveToWorkorder = async () => {
     if (selectedEmployees.length < 1) { setActionError('Select at least 1 employee'); return; }
-    const baseAmount = baseProposalValue(workorderModal);
-    const milestones = workorderMilestones
-      .filter(fm => fm.title.trim())
-      .map(fm => ({
-        ...fm,
-        amount: baseAmount > 0 ? Math.round((Number(fm.amount) / 100) * baseAmount) : Number(fm.amount) || 0,
-        status: 'pending',
-        technicalMilestones: fm.technicalMilestones
-          .filter(tm => tm.title.trim())
-          .map(tm => ({ ...tm, status: 'pending', expectedDate: tm.expectedDate || null }))
-      }));
+    const milestones = serializeMilestones(workorderModal, workorderMilestones);
     try {
       await axios.put(`/api/projects/${workorderModal.projectId}/change-stage`, {
         targetStage: 'workorder',
@@ -624,23 +667,21 @@ export default function AdminDashboard() {
     }
   };
 
-  // Open the milestone modal for a proposal OR a work-order project. Existing
-  // milestone amounts are stored as absolute values (computed off the proposal
-  // value at save time); convert them back to a percentage of the CURRENT base
-  // so the "% of proposal" field shows a sensible number and re-saving recomputes
-  // correctly off the latest revision.
+  // Open the milestone modal for a proposal OR a work-order project. The "%"
+  // field is filled from each milestone's stored percent (or recovered from its
+  // amount for legacy data), and IDs are renumbered in order; saving recomputes
+  // amounts off the billing base (approved budget when set).
   const openMilestonesModal = (p) => {
-    const base = baseProposalValue(p);
     const existingFMs = (p.financialMilestones || []).filter(fm => fm.title);
     setProposalMilestonesModal(p);
     setWorkorderMilestones(existingFMs.length > 0
       ? existingFMs.map((fm, i) => ({
           ...fm,
-          financialMilestoneId: fm.financialMilestoneId || `FM-${i + 1}`,
-          amount: base > 0 ? Math.round((fm.amount / base) * 1000) / 10 : fm.amount,
+          financialMilestoneId: `FM-${i + 1}`,
+          amount: milestonePercent(p, fm),
           technicalMilestones: (fm.technicalMilestones || []).map((tm, j) => ({
             ...tm,
-            technicalMilestoneId: tm.technicalMilestoneId || `TM-${i + 1}-${j + 1}`
+            technicalMilestoneId: `TM-${i + 1}-${j + 1}`
           }))
         }))
       : presetMilestoneRows());
@@ -648,17 +689,7 @@ export default function AdminDashboard() {
   };
 
   const saveProposalMilestones = async () => {
-    const baseAmount = baseProposalValue(proposalMilestonesModal);
-    const milestones = workorderMilestones
-      .filter(fm => fm.title.trim())
-      .map(fm => ({
-        ...fm,
-        amount: baseAmount > 0 ? Math.round((Number(fm.amount) / 100) * baseAmount) : Number(fm.amount) || 0,
-        status: 'pending',
-        technicalMilestones: fm.technicalMilestones
-          .filter(tm => tm.title.trim())
-          .map(tm => ({ ...tm, status: 'pending', expectedDate: tm.expectedDate || null }))
-      }));
+    const milestones = serializeMilestones(proposalMilestonesModal, workorderMilestones);
     try {
       await axios.put(`/api/projects/${proposalMilestonesModal.projectId}`, { financialMilestones: milestones });
       setProposalMilestonesModal(null); setWorkorderMilestones([]); setActionError(''); fetchProjects();
@@ -2284,16 +2315,17 @@ export default function AdminDashboard() {
               </p>
               {actionError && <div className="auth-error">{actionError}</div>}
               {(() => {
-                const pmBase = baseProposalValue(proposalMilestonesModal);
+                const pmBase = milestoneBase(proposalMilestonesModal);
+                const pmApproved = proposalMilestonesModal.approvedBudget > 0;
                 return pmBase > 0 && (
                   <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: 10 }}>
-                    Base proposal value: <strong>{fmtMoney(pmBase)}</strong> — enter % for each milestone
+                    {pmApproved ? 'Approved budget' : 'Base proposal value'}: <strong>{fmtMoney(pmBase)}</strong> — enter % for each milestone
                   </div>
                 );
               })()}
               <h3 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: 8 }}>Financial & Technical Milestones</h3>
               {workorderMilestones.map((fm, fmIdx) => {
-                const pmBase = baseProposalValue(proposalMilestonesModal);
+                const pmBase = milestoneBase(proposalMilestonesModal);
                 const computedAmt = pmBase > 0 ? Math.round((Number(fm.amount) / 100) * pmBase) : 0;
                 return (
                 <div key={fmIdx} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 16, marginBottom: 12, background: 'var(--card, #F3F4F6)' }}>
@@ -2310,7 +2342,7 @@ export default function AdminDashboard() {
                     </div>
                     <div className="form-group" style={{ marginBottom: 8 }}>
                       <label style={{ fontSize: '0.8rem' }}>
-                        Amount (% of proposal){pmBase > 0 && computedAmt > 0 && <span style={{ color: 'var(--success)', marginLeft: 6 }}>= {fmtMoney(computedAmt)}</span>}
+                        Amount (% of value){pmBase > 0 && computedAmt > 0 && <span style={{ color: 'var(--success)', marginLeft: 6 }}>= {fmtMoney(computedAmt)}</span>}
                       </label>
                       <input type="number" min={0} max={100} value={fm.amount} onChange={e => updateFM(fmIdx, 'amount', e.target.value)} placeholder="e.g. 20" />
                     </div>
@@ -2667,15 +2699,16 @@ export default function AdminDashboard() {
 
               <h3 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: 8 }}>Financial & Technical Milestones</h3>
               {(() => {
-                const woBase = baseProposalValue(workorderModal);
+                const woBase = milestoneBase(workorderModal);
+                const woApproved = workorderModal.approvedBudget > 0;
                 return woBase > 0 && (
                   <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: 10 }}>
-                    Base proposal value: <strong>{fmtMoney(woBase)}</strong> — enter % for each milestone
+                    {woApproved ? 'Approved budget' : 'Base proposal value'}: <strong>{fmtMoney(woBase)}</strong> — enter % for each milestone
                   </div>
                 );
               })()}
               {workorderMilestones.map((fm, fmIdx) => {
-                const woBase = baseProposalValue(workorderModal);
+                const woBase = milestoneBase(workorderModal);
                 const computedAmt = woBase > 0 ? Math.round((Number(fm.amount) / 100) * woBase) : 0;
                 return (
                 <div key={fmIdx} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 16, marginBottom: 12, background: 'var(--card, #F3F4F6)' }}>
@@ -2693,7 +2726,7 @@ export default function AdminDashboard() {
                     </div>
                     <div className="form-group" style={{ marginBottom: 8 }}>
                       <label style={{ fontSize: '0.8rem' }}>
-                        Amount (% of proposal){woBase > 0 && computedAmt > 0 && <span style={{ color: 'var(--success)', marginLeft: 6 }}>= {fmtMoney(computedAmt)}</span>}
+                        Amount (% of value){woBase > 0 && computedAmt > 0 && <span style={{ color: 'var(--success)', marginLeft: 6 }}>= {fmtMoney(computedAmt)}</span>}
                       </label>
                       <input type="number" min={0} max={100} value={fm.amount} onChange={e => updateFM(fmIdx, 'amount', e.target.value)}
                         placeholder="e.g. 20" />

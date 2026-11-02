@@ -403,7 +403,7 @@ export default function EmployeeDashboard() {
                   </div>
                   <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
                     <span className="vertical-tag">{p.vertical}</span>
-                    <span className="money">{'₹'}{(p.totalProposedMoney / 100000).toFixed(1)}L</span>
+                    <span className="money">{'₹'}{(((p.approvedBudget && p.approvedBudget > 0) ? p.approvedBudget : p.totalProposedMoney) / 100000).toFixed(1)}L</span>
                   </div>
 
                   {/* 3 Progress metrics */}

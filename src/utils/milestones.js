@@ -23,20 +23,33 @@ export const milestoneBase = (p) => {
   return (p.approvedBudget && p.approvedBudget > 0) ? p.approvedBudget : baseProposalValue(p);
 };
 
-// The base that EXISTING (legacy) stored amounts were computed against — the first/
-// original proposal (revisions[0]); used only to recover their % when a milestone
-// has no stored `percent`.
-export const legacySourceBase = (p) => {
-  if (!p) return 0;
+// Recover the base that EXISTING (legacy) stored amounts were computed against,
+// for milestones that have no saved `percent`. A project's amounts were computed
+// off one of a few candidate values (approved budget, latest/original proposal
+// revision, proposal value) but which one isn't recorded, so we pick the candidate
+// that makes the milestone percentages sum closest to 100% — the base they were
+// genuinely a percentage of. (With `percent` saved this is never needed.)
+export const recoverBase = (p) => {
+  const fallback = baseProposalValue(p);
+  const fms = (p?.financialMilestones || []).filter(f => f.title && f.title.trim());
+  if (!fms.length) return fallback;
   const revs = p.revisions || [];
-  return revs[0]?.amount || p.proposalValue || p.totalProposedMoney || 0;
+  const candidates = [p.approvedBudget, revs[revs.length - 1]?.amount, revs[0]?.amount, p.proposalValue, p.totalProposedMoney]
+    .filter(v => v && v > 0);
+  let best = fallback, bestErr = Infinity;
+  for (const b of candidates) {
+    const sumPct = fms.reduce((s, f) => s + (f.amount / b) * 100, 0);
+    const err = Math.abs(sumPct - 100);
+    if (err < bestErr - 0.01) { bestErr = err; best = b; }
+  }
+  return best;
 };
 
 // Percent a stored milestone represents: its saved `percent` if present, else
-// derived from its amount against the base it was originally computed on.
+// derived from its amount against the recovered base.
 export const milestonePercent = (p, fm) => {
   if (fm.percent != null && fm.percent !== '') return fm.percent;
-  const src = legacySourceBase(p);
+  const src = recoverBase(p);
   return src > 0 ? Math.round((fm.amount / src) * 1000) / 10 : (fm.amount || 0);
 };
 
